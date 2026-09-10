@@ -566,7 +566,8 @@ struct ScopedSampleTiming {
     auto t_start = ros::Time::now();
     // while(loop < max_loop_num_){
     while(true){
-      if((ros::Time::now() - t_start).toSec() > max_mani_search_time_){
+      if((max_loop_num_ > 0 && loop >= max_loop_num_) ||
+         (ros::Time::now() - t_start).toSec() > max_mani_search_time_){
         break;
       }
 
@@ -738,6 +739,9 @@ struct ScopedSampleTiming {
     }else{
       // ROS_ERROR("[Sample Mani]: Fail. num_in_tree: %d, num_in_anti_tree: %d, loop num: %d, node expend: %d, time: %lf.", tree_count_, anti_tree_count_, loop, (int)node_pool_.size(), (ros::Time::now() - time_1).toSec() * 1000.0);
     }
+    ROS_INFO("[SampleMani] search exit: loops=%d max_loop_num=%d elapsed=%.3f ms path=%s",
+             loop, max_loop_num_, (ros::Time::now() - t_start).toSec() * 1000.0,
+             have_path_ ? "true" : "false");
       
     return have_path_;
   }
