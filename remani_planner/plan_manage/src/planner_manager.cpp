@@ -481,7 +481,18 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
     if (!computeInitReferenceState(start_pt, start_vel, start_acc, start_jerk, start_yaw, start_singul, start_gripper,
                                    local_target_pt, local_target_vel, local_target_acc, local_target_yaw, local_target_gripper,
                                    initMJO_container, singul_container, 
-                                   flag_polyInit, continous_failures_count_)){return false;}
+                                   flag_polyInit, continous_failures_count_)){
+      // Keep profiling truthful even when initialization rejects the seed.
+      // Previously this early return left init_time at its caller-provided
+      // default, making a failed warm-start look like a zero-cost success
+      // attempt and hiding the actual fallback overhead.
+      t_init = ros::Time::now() - t_start;
+      init_time = t_init.toSec();
+      opt_time = 0.0;
+      ROS_WARN("[Planner profile] initialization rejected; init_ms=%.3f fallback_required=true",
+               init_time * 1000.0);
+      return false;
+    }
 
     Eigen::VectorXd init_len(7);
     double init_dura = 0.0;
