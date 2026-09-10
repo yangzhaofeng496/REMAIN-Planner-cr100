@@ -19,6 +19,7 @@
 	<arg name="profile_planning_horizon" default="5.0"/>
 	<arg name="profile_max_loop_num" default="5000"/>
 	<arg name="profile_max_sample_time" default="0.2"/>
+	<arg name="profile_max_mani_search_time" default="8.0"/>
 	<arg name="profile_enable_rrt_rewire" default="true"/>
 	<arg name="profile_rrt_max_rewire_neighbors" default="0"/>
 	<arg name="profile_rrt_collision_pos_resolution" default="0.01"/>
@@ -41,6 +42,7 @@
 		<param if="$(arg override_planner_profile)" name="fsm/planning_horizon" value="$(arg profile_planning_horizon)" type="double"/>
 		<param if="$(arg override_planner_profile)" name="search/max_loop_num" value="$(arg profile_max_loop_num)" type="int"/>
 		<param if="$(arg override_planner_profile)" name="search/max_sample_time" value="$(arg profile_max_sample_time)" type="double"/>
+		<param if="$(arg override_planner_profile)" name="search/max_mani_search_time" value="$(arg profile_max_mani_search_time)" type="double"/>
 		<param if="$(arg override_planner_profile)" name="search/enable_rrt_rewire" value="$(arg profile_enable_rrt_rewire)" type="bool"/>
 		<param if="$(arg override_planner_profile)" name="search/rrt_max_rewire_neighbors" value="$(arg profile_rrt_max_rewire_neighbors)" type="int"/>
 		<param if="$(arg override_planner_profile)" name="search/rrt_collision_pos_resolution" value="$(arg profile_rrt_collision_pos_resolution)" type="double"/>
