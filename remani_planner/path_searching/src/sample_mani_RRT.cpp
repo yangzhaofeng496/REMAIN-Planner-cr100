@@ -286,7 +286,9 @@ struct ScopedSampleTiming {
     // std::cout << "end_size: " << end_list.size() << std::endl;
 
     // std::cout << "test 3" << std::endl; 
-    // rrt搜
+    // This is the whole-body fallback after the manipulator-layer search.
+    ROS_INFO("[SampleMani] entering fallback whole-body RRT: start_nodes=%zu end_nodes=%zu",
+             start_list.size(), end_list.size());
     std::vector<Eigen::VectorXd> path_fill;
     std::vector<double> yaw_list_fill, t_list_fill;
     bool status = rrt_plan_->RRTSearchAndGetSimplePath(start_list, start_yaw_list, end_list, end_yaw_list, 
