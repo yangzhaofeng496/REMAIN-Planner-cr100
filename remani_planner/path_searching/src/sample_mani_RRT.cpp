@@ -98,7 +98,7 @@ struct ScopedSampleTiming {
              mani_status ? "success" : "failure",
              car_state_list.size(), car_state_list_check.size());
 
-    ROS_INFO("[SampleMani] stats: max_index=%d collision_checks=%zu edge_interpolations=%zu nodes=%zu fallback_rrt=%s",
+    ROS_INFO("[SampleMani] stats: max_index=%d collision_checks=%zu edge_interpolations=%zu manipulator_search=%s",
              max_index_, collision_check_calls_, edge_interpolation_checks_, nodes_created_,
              mani_status ? "true" : "false");
     // ROS_ERROR("=====================1");
