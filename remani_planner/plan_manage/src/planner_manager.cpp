@@ -172,6 +172,7 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
     // the expensive coupled A* search and made warm-start initialization
     // unreachable.
     if (flag_first_call || flag_polyInit){
+      ROS_INFO("[Planner profile] initialization_mode=front_end_A_star");
       // ROS_INFO("get init from search");
       flag_first_call = false;
       /* basic params */
@@ -301,6 +302,7 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
     /*** case 2: initialize from previous optimal trajectory ***/
     else{ // FIXME check replan
       ROS_INFO("get init from local traj");
+      ROS_INFO("[Planner profile] initialization_mode=warm_start_previous_trajectory");
       // const double local_target_yaw,
       // std::vector<poly_traj::MinSnapOpt<8>> &initMJO_container,
       // std::vector<int> &singul_container,
