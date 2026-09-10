@@ -76,6 +76,8 @@ namespace mani_sample {
     double goal_rate_;
     int max_loop_num_;
     bool enable_mani_oneshot_{true};
+    int max_oneshot_calls_{0};
+    int oneshot_calls_{0};
     double max_mani_search_time_;
     size_t collision_check_calls_{0};
     size_t edge_interpolation_checks_{0};

@@ -14,6 +14,7 @@
   <arg name="profile_rrt_collision_joint_resolution" default="0.01"/>
   <arg name="profile_rrt_collision_min_checks" default="10"/>
   <arg name="profile_enable_mani_oneshot" default="true"/>
+  <arg name="profile_max_oneshot_calls" default="0"/>
 
   <param name="robot_description" command="$(find xacro)/xacro '$(find ir100_description)/urdf/ir100_robot.xacro'"/>
 
@@ -35,6 +36,7 @@
     <arg name="profile_rrt_collision_joint_resolution" value="$(arg profile_rrt_collision_joint_resolution)"/>
     <arg name="profile_rrt_collision_min_checks" value="$(arg profile_rrt_collision_min_checks)"/>
     <arg name="profile_enable_mani_oneshot" value="$(arg profile_enable_mani_oneshot)"/>
+    <arg name="profile_max_oneshot_calls" value="$(arg profile_max_oneshot_calls)"/>
   </include>
 
   <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher">
