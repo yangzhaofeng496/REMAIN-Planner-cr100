@@ -696,7 +696,7 @@ namespace remani_planner
         // active.  RViz must start at the measured robot state instead.
         mm_state_pos_, mm_car_yaw_);
     ROS_INFO("[WarmStart profile] requested=%s success=%s init_ms=%.3f opt_ms=%.3f",
-             flag_use_poly_init ? "false" : "true", plan_success ? "true" : "false",
+             (!flag_use_poly_init) ? "true" : "false", plan_success ? "true" : "false",
              init_time, opt_time);
     have_new_target_ = false;
 
