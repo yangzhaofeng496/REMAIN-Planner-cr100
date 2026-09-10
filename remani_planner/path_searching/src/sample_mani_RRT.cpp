@@ -98,12 +98,23 @@ struct ScopedSampleTiming {
              mani_status ? "success" : "failure",
              car_state_list.size(), car_state_list_check.size());
 
-    ROS_INFO("[SampleMani] stats: max_index=%d collision_checks=%zu edge_interpolations=%zu manipulator_search=%s",
+    // A successful tree search must still produce one arm state per mobile
+    // path layer.  Randomized search can otherwise return a short path; the
+    // indexing below would dereference past the end and kill the ROS node.
+    if (mani_status) {
+      getTraj(mani_path);
+      if (mani_path.size() < car_state_list.size()) {
+        ROS_WARN("[SampleMani] rejecting incomplete arm path: states=%zu expected=%zu; using fallback",
+                 mani_path.size(), car_state_list.size());
+        mani_status = false;
+      }
+    }
+
+    ROS_INFO("[SampleMani] stats: max_index=%d collision_checks=%zu edge_interpolations=%zu nodes=%zu manipulator_search=%s",
              max_index_, collision_check_calls_, edge_interpolation_checks_, nodes_created_,
              mani_status ? "true" : "false");
     // ROS_ERROR("=====================1");
     if(mani_status && astar_succ){
-      getTraj(mani_path);
       // ROS_ERROR("=====================1");
       int singul_now = singul_container[0];
       state_full.head(mobile_base_dof_) = car_state_list[0].head(mobile_base_dof_);
