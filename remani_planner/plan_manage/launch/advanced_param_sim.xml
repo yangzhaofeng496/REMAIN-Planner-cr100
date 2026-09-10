@@ -14,6 +14,16 @@
 	<arg name="exp_param_file"/>
 	<arg name="mm_param_file" default="$(find remani_planner)/config/mm_param.yaml"/>
 	<arg name="planner_param_file" default="$(find remani_planner)/config/remani_planner_param.yaml"/>
+	<arg name="override_planner_profile" default="false"/>
+	<arg name="profile_global_plan" default="true"/>
+	<arg name="profile_planning_horizon" default="5.0"/>
+	<arg name="profile_max_loop_num" default="5000"/>
+	<arg name="profile_max_sample_time" default="0.2"/>
+	<arg name="profile_enable_rrt_rewire" default="true"/>
+	<arg name="profile_rrt_max_rewire_neighbors" default="0"/>
+	<arg name="profile_rrt_collision_pos_resolution" default="0.01"/>
+	<arg name="profile_rrt_collision_joint_resolution" default="0.01"/>
+	<arg name="profile_rrt_collision_min_checks" default="10"/>
 
 	<arg name="cx"/>
 	<arg name="cy"/>
@@ -25,6 +35,15 @@
 		<rosparam file="$(arg exp_param_file)"/>
 		<rosparam file="$(arg mm_param_file)"/>
 		<rosparam file="$(arg planner_param_file)"/>
+		<param if="$(arg override_planner_profile)" name="fsm/global_plan" value="$(arg profile_global_plan)" type="bool"/>
+		<param if="$(arg override_planner_profile)" name="fsm/planning_horizon" value="$(arg profile_planning_horizon)" type="double"/>
+		<param if="$(arg override_planner_profile)" name="search/max_loop_num" value="$(arg profile_max_loop_num)" type="int"/>
+		<param if="$(arg override_planner_profile)" name="search/max_sample_time" value="$(arg profile_max_sample_time)" type="double"/>
+		<param if="$(arg override_planner_profile)" name="search/enable_rrt_rewire" value="$(arg profile_enable_rrt_rewire)" type="bool"/>
+		<param if="$(arg override_planner_profile)" name="search/rrt_max_rewire_neighbors" value="$(arg profile_rrt_max_rewire_neighbors)" type="int"/>
+		<param if="$(arg override_planner_profile)" name="search/rrt_collision_pos_resolution" value="$(arg profile_rrt_collision_pos_resolution)" type="double"/>
+		<param if="$(arg override_planner_profile)" name="search/rrt_collision_joint_resolution" value="$(arg profile_rrt_collision_joint_resolution)" type="double"/>
+		<param if="$(arg override_planner_profile)" name="search/rrt_collision_min_checks" value="$(arg profile_rrt_collision_min_checks)" type="int"/>
 
 		<remap from="~gripper_cmd" to="$(arg gripper_cmd_topic)"/>
 		<remap from="~gripper_state" to="$(arg gripper_state_topic)"/>

@@ -3,6 +3,16 @@
   <arg name="exp_param_file" value="$(find remani_planner)/config/exp0_param.yaml"/>
   <arg name="mm_param_file" value="$(find remani_planner)/config/mm_param_ir100_cr10.yaml"/>
   <arg name="planner_param_file" value="$(find remani_planner)/config/remani_planner_param_manual.yaml"/>
+  <arg name="override_planner_profile" default="false"/>
+  <arg name="profile_global_plan" default="true"/>
+  <arg name="profile_planning_horizon" default="5.0"/>
+  <arg name="profile_max_loop_num" default="5000"/>
+  <arg name="profile_max_sample_time" default="0.2"/>
+  <arg name="profile_enable_rrt_rewire" default="true"/>
+  <arg name="profile_rrt_max_rewire_neighbors" default="0"/>
+  <arg name="profile_rrt_collision_pos_resolution" default="0.01"/>
+  <arg name="profile_rrt_collision_joint_resolution" default="0.01"/>
+  <arg name="profile_rrt_collision_min_checks" default="10"/>
 
   <param name="robot_description" command="$(find xacro)/xacro '$(find ir100_description)/urdf/ir100_robot.xacro'"/>
 
@@ -13,6 +23,16 @@
     <arg name="mm_param_file" value="$(arg mm_param_file)"/>
     <arg name="planner_param_file" value="$(arg planner_param_file)"/>
     <arg name="load_map" value="$(arg load_map)"/>
+    <arg name="override_planner_profile" value="$(arg override_planner_profile)"/>
+    <arg name="profile_global_plan" value="$(arg profile_global_plan)"/>
+    <arg name="profile_planning_horizon" value="$(arg profile_planning_horizon)"/>
+    <arg name="profile_max_loop_num" value="$(arg profile_max_loop_num)"/>
+    <arg name="profile_max_sample_time" value="$(arg profile_max_sample_time)"/>
+    <arg name="profile_enable_rrt_rewire" value="$(arg profile_enable_rrt_rewire)"/>
+    <arg name="profile_rrt_max_rewire_neighbors" value="$(arg profile_rrt_max_rewire_neighbors)"/>
+    <arg name="profile_rrt_collision_pos_resolution" value="$(arg profile_rrt_collision_pos_resolution)"/>
+    <arg name="profile_rrt_collision_joint_resolution" value="$(arg profile_rrt_collision_joint_resolution)"/>
+    <arg name="profile_rrt_collision_min_checks" value="$(arg profile_rrt_collision_min_checks)"/>
   </include>
 
   <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher">
