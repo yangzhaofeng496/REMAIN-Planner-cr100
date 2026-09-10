@@ -88,6 +88,7 @@ namespace remani_planner{
     int max_loop_num_;
     size_t collision_check_calls_{0};
     size_t rewire_calls_{0};
+    double rewire_time_ms_{0.0};
     size_t nodes_created_{0};
     std::vector<double> max_size_, min_size_;
     Eigen::Matrix4d T_q_0_;

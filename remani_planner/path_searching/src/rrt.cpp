@@ -19,6 +19,7 @@ struct ScopedRrtTiming {
     ScopedRrtTiming timing("RrtPlanning::RRTSearchAndGetSimplePath");
     collision_check_calls_ = 0;
     rewire_calls_ = 0;
+    rewire_time_ms_ = 0.0;
     nodes_created_ = 0;
     std::vector<Eigen::VectorXd> path_full;
     std::vector<double> t_list_full, yaw_list_full;
@@ -35,8 +36,8 @@ struct ScopedRrtTiming {
     bool status = search(start_pt_list, start_yaw_list, end_pt_list, end_yaw_list, start_g_score_list, start_layer_list, end_g_score_list, end_layer_list, start_singul_list, end_singul_list);
 
     if (status == false){
-      ROS_INFO("[RRT] stats: nodes=%zu collision_checks=%zu rewire_calls=%zu status=failure",
-               nodes_created_, collision_check_calls_, rewire_calls_);
+      ROS_INFO("[RRT] stats: nodes=%zu collision_checks=%zu rewire_calls=%zu rewire_time=%.3f ms status=failure",
+               nodes_created_, collision_check_calls_, rewire_calls_, rewire_time_ms_);
       return status;
       // cout << "[RRT replan]: RRT search fail!" << endl;
     }else{
@@ -63,8 +64,8 @@ struct ScopedRrtTiming {
       t_total = 0.0;
     }
 
-    ROS_INFO("[RRT] stats: nodes=%zu collision_checks=%zu rewire_calls=%zu status=success",
-             nodes_created_, collision_check_calls_, rewire_calls_);
+    ROS_INFO("[RRT] stats: nodes=%zu collision_checks=%zu rewire_calls=%zu rewire_time=%.3f ms status=success",
+             nodes_created_, collision_check_calls_, rewire_calls_, rewire_time_ms_);
     return status;
   }
 
@@ -517,6 +518,10 @@ struct ScopedRrtTiming {
 
   void RrtPlanning::rewire(PathNodeRRTPtr q_new, double near_time){
     ++rewire_calls_;
+    const ros::WallTime rewire_start = ros::WallTime::now();
+    const auto record_rewire_time = [&]() {
+      rewire_time_ms_ += (ros::WallTime::now() - rewire_start).toSec() * 1000.0;
+    };
     ScopedRrtTiming timing("RrtPlanning::rewire");
     std::vector<PathNodeRRTPtr> neighbour;
     PathNodeRRTPtr temp;
@@ -556,8 +561,10 @@ struct ScopedRrtTiming {
       neighbour.resize(rrt_max_rewire_neighbors_);
     }
     num = neighbour.size();
-    if(num < 1)
+    if(num < 1){
+      record_rewire_time();
       return;
+    }
 
     temp = nullptr;
     double min = q_new->g_score;
@@ -581,6 +588,7 @@ struct ScopedRrtTiming {
         // neighbour[i]->g_score = q_new->g_score + estimateHeuristic(q_new, neighbour[i]);
       }
     }
+    record_rewire_time();
   }
 
   void RrtPlanning::linkNode(PathNodeRRTPtr &parent, PathNodeRRTPtr &child){
