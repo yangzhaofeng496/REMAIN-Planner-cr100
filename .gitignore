@@ -1,0 +1,35 @@
+# ROS/catkin build products
+build/
+devel/
+install/
+log/
+.catkin_tools/
+*.bag
+
+# Python and editor caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.vscode/
+.DS_Store
+
+# Local diagnostics and screenshots
+.diagnostics/
+Screenshot *.png
+attachment/*.gif
+
+# Temporary/debug artifacts
+debug_transform.py
+TCP-IP-ROS-6AXis.zip
+TCP-IP-ROS-6AXis/.git-inner-backup/
+
+# Local-only test and verification helpers
+tests/
+tools/test_base_collision.py
+docker/check_joint_state.sh
+docker/check_tf_transforms.sh
+docker/debug_visualization.sh
+docker/run_base_collision_keyboard_test.sh
+docker/test_cr10_collision_fix.sh
+docker/verify_alignment.sh

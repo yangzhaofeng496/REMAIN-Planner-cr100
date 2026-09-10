@@ -1,0 +1,63 @@
+search:
+  oneshot_check_len: 0.02
+  oneshot_range    : 1.0
+
+  traj_forward_penalty     : 1.0
+  traj_back_penalty        : 3.0
+  traj_gear_switch_penalty : 10.0
+  traj_steer_penalty       : 5.0
+  traj_steer_change_penalty: 2.0
+
+  # Bound repeated mobile-base searches so one goal cannot consume tens of seconds.
+  try_astar_times: 3
+
+  yaw_resolution    : 3.15
+  max_arc           : 0.4
+  min_turning_radius: 0.2
+  lambda_heu        : 1
+  max_seach_time    : 1.0
+  check_num         : 8
+  dist_resolution   : 0.2
+  sample_time       : 0.1
+  curvatureDisCoe   : 0.4
+  allocate_num      : 100000
+
+  goal_rate: 0.8
+  max_loop_num: 5000
+  max_sample_time: 0.2
+  # The arm must be able to reconfigure while the base crosses the bar.
+  # 50 ms was too short for the joint-space RRT to find that coupled path.
+  max_mani_search_time: 8.0
+
+optimization:
+  weight_obstacle               : 50000.0
+  weight_manipulator_self       : 1000.0
+  weight_base_feasibility       : 100.0
+  weight_manipulator_feasibility: 100.0
+  # Avoid shortening the initial base trajectory so aggressively that wheel
+  # acceleration becomes infeasible and forces repeated replans.
+  weight_time                   : 0.1
+
+  ground_safe_dis        : 0.03
+  safe_margin            : 0.10
+  safe_margin_mani       : 0.10
+  self_safe_margin       : 0.10
+  ground_safe_margin     : 0.03
+
+  mobile_base_opt_gear: true
+  constrain_points_perPiece: 16
+  dense_sample_resolution: 16
+
+fsm:
+  target_type  : 1
+  time_for_gripper: 0.05
+
+  thresh_replan_time: 2.5
+  replan_trajectory_time: 1.7
+  planning_horizon: 5.0
+  global_plan: true
+  emergency_time: 1.5
+
+grid_map:
+  use_load_map: true
+  use_global_map: false

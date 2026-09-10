@@ -1,0 +1,34 @@
+mm:
+  collision_model_source: urdf_mesh
+  collision_mesh_sample_resolution: 0.08
+  collision_mesh_use_volume: false
+  mobile_base_dof            : 2
+  mobile_base_length         : 0.70
+  mobile_base_width          : 0.55
+  mobile_base_height         : 0.32
+  mobile_base_wheel_base     : 0.459
+  mobile_base_wheel_radius   : 0.039
+  mobile_base_non_singul_vel : 0.05
+  mobile_base_max_wheel_omega: 10.0
+  mobile_base_max_wheel_alpha: 20.0
+  mobile_base_check_radius   : 0.18
+
+  manipulator_dof    : 6
+  manipulator_max_vel: 1.57
+  manipulator_max_acc: 3.14
+
+  # Based on the user's IR100 + Dobot CR10 xacro:
+  # arm_world_joint: xyz="0 0 0.735"
+  # arm_base_joint : rpy="0 0 1.5707"
+  base_mani_fixed_joint_xyz_ypr: [0.0, 0.0, 0.735, 1.5707, 0.0, 0.0]
+
+  use_fast_armer       : false
+  use_dobot_cr10_mesh  : true
+  use_ir100_mesh       : true
+  use_robot_description_tf: true
+  joint_names          : [joint1, joint2, joint3, joint4, joint5, joint6]
+  manipulator_thickness: 0.055
+  # Approximate UR-style chain parameters extracted from cr10_robot_urdf.xacro.
+  manipulator_config   : [0.1765, 0.607, 0.568, 0.191, 0.125, 0.1084]
+  manipulator_min_pos  : [-3.14, -3.14, -2.861, -3.14, -3.14, -6.28]
+  manipulator_max_pos  : [ 3.14,  3.14,  2.861,  3.14,  3.14,  6.28]

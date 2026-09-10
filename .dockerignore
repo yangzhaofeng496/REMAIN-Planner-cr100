@@ -1,0 +1,8 @@
+build
+devel
+.git
+.github
+*.pyc
+__pycache__
+*.log
+attachment

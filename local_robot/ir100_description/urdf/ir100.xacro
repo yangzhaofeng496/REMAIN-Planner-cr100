@@ -1,0 +1,138 @@
+<?xml version="1.0"?>
+<robot name="ir100_robot" xmlns:xacro="http://ros.org/wiki/xacro">
+  <xacro:include filename="$(find dobot_description)/urdf/cr10_robot_urdf.xacro" />
+
+<xacro:macro name="ir100_robot">
+  <material name="White">
+    <color rgba="1 1 1 1"/>
+  </material>
+
+  <link name="base_link" >
+ <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="77.474" />
+      <inertia ixx="3.26846549663969" ixy="-0.0244315150751735" ixz="0.00286937472831613" iyy="2.55527739370802" iyz="0.0384643723703752" izz="3.82730066331617" />
+ </inertial>
+ <visual>
+     <origin xyz="0 0 0" rpy="0 0 0" />
+     <material name="White"/>
+     <geometry>
+        <mesh filename="package://ir100_description/meshes/base_link.STL" />
+     </geometry>
+ </visual>
+ <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+      <mesh filename="package://ir100_description/meshes/base_link.STL" />
+      </geometry>
+ </collision>
+  </link>
+
+<link name="arm_gripper_link">
+            <inertial>
+                <origin xyz="0 0 0" rpy="0 0 0 " />
+                <mass value="0.12527" />
+                <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0" />
+            </inertial>
+            <visual>
+                <origin xyz="0 0 0" rpy="0 0 0" />
+                <geometry>
+                    <mesh filename="package://ir100_description/meshes/gripper.stl" />
+                </geometry>
+                <material name="">
+                    <color rgba="0.89804 0.91765 0.92941 1" />
+                </material>
+            </visual>
+            <collision>
+                <origin xyz="0 0 0" rpy="0 0 0" />
+                <geometry>
+                    <mesh filename="package://ir100_description/meshes/gripper.stl" />
+                </geometry>
+            </collision>
+        </link>
+        <joint name="arm_gripper_joint" type="fixed">
+            <origin xyz="0 0 0.0005" rpy="0 -1.5707 1.5707" />
+            <parent link="Link6" />
+            <child link="arm_gripper_link" />
+        </joint>
+  
+   <link name="left_wheel_link" />
+  <joint name="left_wheel_joint" type="fixed">
+    <origin xyz="0 0.2295 0.039" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="left_wheel_link" />
+  </joint>
+  
+   <link name="right_wheel_link" />
+  <joint name="right_wheel_joint" type="fixed">
+    <origin xyz="0 -0.2295 0.039" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="right_wheel_link" />
+  </joint>
+
+  <link name="imu_link" />
+  <joint name="imu_joint" type="fixed">
+    <origin xyz="0.223 0 0.21" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="imu_link" />
+  </joint>
+
+  <link name="mid_laser_link" />
+  <joint name="mid_laser_joint" type="fixed">
+    <origin xyz="0.32 0 0.79" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="mid_laser_link" />
+  </joint>
+  
+  <link name="front_laser" />
+  <joint name="front_laser_joint" type="fixed">
+    <origin xyz="0.357 0.247 0.181" rpy="3.1415926 0 0.7853" />
+    <parent link="base_link" />
+    <child link="front_laser" />
+  </joint>
+  
+    <link name="rear_laser" />
+  <joint name="rear_laser_joint" type="fixed">
+    <origin xyz="-0.357 -0.247 0.181" rpy="-3.1415926 0 -2.356" />
+    <parent link="base_link" />
+    <child link="rear_laser" />
+  </joint>
+  
+    <link name="front_eir_link" />
+  <joint name="front_eir_joint" type="fixed">
+    <origin xyz="0.4 0 0.606" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="front_eir_link" />
+  </joint>
+
+
+  <link name="left_eir_link" />
+  <joint name="left_eir_joint" type="fixed">
+    <origin xyz="0 0.29 0.606" rpy="0 0 1.5707" />
+    <parent link="base_link" />
+    <child link="left_eir_link" />
+  </joint>
+
+  <link name="right_eir_link" />
+  <joint name="right_eir_joint" type="fixed">
+    <origin xyz="0 -0.29  0.606" rpy="0 0 -1.5707" />
+    <parent link="base_link" />
+    <child link="right_eir_link" />
+  </joint>
+  
+    <link name="arm_world_link" />
+  <joint name="arm_world_joint" type="fixed">
+    <origin xyz="0 0 0.735" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="arm_world_link" />
+  </joint>
+
+ <xacro:cr10_robot/>
+  <joint name="arm_base_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 1.5707" />
+    <parent link="arm_world_link" />
+    <child link="arm_base_link" />
+  </joint>
+  
+</xacro:macro>
+</robot>

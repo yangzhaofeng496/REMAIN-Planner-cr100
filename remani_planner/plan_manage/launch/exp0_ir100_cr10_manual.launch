@@ -1,0 +1,23 @@
+<launch>
+  <arg name="load_map" default="true"/>
+  <arg name="exp_param_file" value="$(find remani_planner)/config/exp0_param.yaml"/>
+  <arg name="mm_param_file" value="$(find remani_planner)/config/mm_param_ir100_cr10.yaml"/>
+  <arg name="planner_param_file" value="$(find remani_planner)/config/remani_planner_param_manual.yaml"/>
+
+  <param name="robot_description" command="$(find xacro)/xacro '$(find ir100_description)/urdf/ir100_robot.xacro'"/>
+
+  <include file="$(find remani_planner)/launch/run_in_sim.launch">
+    <arg name="publish_robot_state" value="false"/>
+    <arg name="load_robot_description" value="false"/>
+    <arg name="exp_param_file" value="$(arg exp_param_file)"/>
+    <arg name="mm_param_file" value="$(arg mm_param_file)"/>
+    <arg name="planner_param_file" value="$(arg planner_param_file)"/>
+    <arg name="load_map" value="$(arg load_map)"/>
+  </include>
+
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher">
+    <remap from="/joint_states" to="/mm/mani/joint_state"/>
+  </node>
+
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find remani_planner)/launch/exp0.rviz"/>
+</launch>

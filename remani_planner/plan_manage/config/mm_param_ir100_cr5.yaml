@@ -1,0 +1,28 @@
+mm:
+  mobile_base_dof            : 2
+  mobile_base_length         : 0.70
+  mobile_base_width          : 0.55
+  mobile_base_height         : 0.32
+  mobile_base_wheel_base     : 0.459
+  mobile_base_wheel_radius   : 0.039
+  mobile_base_non_singul_vel : 0.05
+  mobile_base_max_wheel_omega: 10.0
+  mobile_base_max_wheel_alpha: 20.0
+  mobile_base_check_radius   : 0.18
+
+  manipulator_dof    : 6
+  manipulator_max_vel: 1.57
+  manipulator_max_acc: 3.14
+
+  # Mount point of the CR5 base_link relative to the mobile base center.
+  # This is an initial estimate and may need small tuning after you inspect RViz.
+  base_mani_fixed_joint_xyz_ypr: [0.0, 0.0, 0.32, 0.0, 0.0, 0.0]
+
+  use_fast_armer       : false
+  use_dobot_cr5_mesh   : true
+  use_ir100_mesh       : true
+  manipulator_thickness: 0.045
+  # Approximate UR-style parameters extracted from the CR5 URDF.
+  manipulator_config   : [0.147, 0.427, 0.357, 0.141, 0.116, 0.105]
+  manipulator_min_pos  : [-3.14, -3.14, -2.86, -3.14, -3.14, -6.28]
+  manipulator_max_pos  : [ 3.14,  3.14,  2.86,  3.14,  3.14,  6.28]
