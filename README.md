@@ -1,126 +1,57 @@
-# REMANI-Planner
+# REMAIN-Planner-cr100
 
-**RE**al-time Whole-body Motion Planning for Mobile **MANI**pulators Using Environment-adaptive Search and Spatial-temporal Optimization
+ROS Noetic mobile-manipulator planner for an IR100 mobile base with a CR10 arm.
 
-![top](attachment/top.png)
+当前版本包含：
 
-## News
+- 底盘与机械臂联合规划；
+- 基于 URDF collision mesh 的环境碰撞、机械臂自碰撞和机械臂-底盘碰撞检查；
+- RViz 2D Nav Goal 测试入口；
+- 规划耗时、机械臂 RRT 和碰撞检查耗时日志；
+- 横梁障碍物仿真场景。
 
-- **Jan 29, 2024**: REMANI-Planner is accepted to [ICRA 2024](https://2024.ieee-icra.org/).
+## 一键运行
 
-## Introduction
+主机需要 Ubuntu 20.04、Docker、ROS Noetic 兼容的 X11 显示环境，并先启动 ROS master：
 
-REMANI-Planner presents a motion planning method capable of generating high-quality, safe, agile and feasible trajectories for mobile manipulators in real time.
-
-![system_overview](./attachment/system_overview.png)
-
-**Authors**: [Chengkai Wu](https://chengkaiwu.me/)\*, [Ruilin Wang](https://github.com/Ruilin-W)\*, [Mianzhi Song](https://robotics-star.com/), [Fei Gao](http://zju-fast.com/fei-gao/), [Jie Mei](https://scholar.google.com/citations?user=tyQm5IkAAAAJ&hl=zh-CN) and [Boyu Zhou](https://robotics-star.com/)$^{\dagger}$.
-
-**Institutions**: [STAR Group](https://robotics-star.com/), [HITSZ MAS Lab](https://hitsz-mas.github.io/mas-lab-website/) and [ZJU FAST Lab](http://zju-fast.com/).
-
-**Video**: [YouTube](https://www.youtube.com/watch?v=iYdAEZ3z11s), [Bilibili](https://www.bilibili.com/video/BV1Wz4y1V7vL).
-
-**Paper**: [Real-time Whole-body Motion Planning for Mobile Manipulators Using Environment-adaptive Search and Spatial-temporal Optimization](https://ieeexplore.ieee.org/document/10610192), 2024 IEEE International Conference on Robotics and Automation (ICRA).
-
-```
-@INPROCEEDINGS{10610192,
-  author={Wu, Chengkai and Wang, Ruilin and Song, Mianzhi and Gao, Fei and Mei, Jie and Zhou, Boyu},
-  booktitle={2024 IEEE International Conference on Robotics and Automation (ICRA)}, 
-  title={Real-time Whole-body Motion Planning for Mobile Manipulators Using Environment-adaptive Search and Spatial-temporal Optimization}, 
-  year={2024},
-  volume={},
-  number={},
-  pages={1369-1375},
-  keywords={Service robots;Dynamics;Transportation;Real-time systems;Planning;Safety;Complexity theory},
-  doi={10.1109/ICRA57147.2024.10610192}}
+```bash
+roscore
 ```
 
-If you find this work useful or interesting, please kindly give us a star ⭐, thanks!😀
+首次运行（构建镜像并启动仿真）：
 
-## Setup
-
-Compiling tests passed on Ubuntu 20.04 with ROS installed.
-
-### Prerequisites
-
-- [ROS](http://wiki.ros.org/ROS/Installation) (tested with Noetic)
-
-```
-sudo apt install libompl-dev libeigen3-dev
-cd /usr/include
-sudo ln -sf eigen3/Eigen Eigen
-sudo ln -sf eigen3/unsupported unsupported
+```bash
+cd ~/tongji/REMANI-Planner
+docker build -f docker/Dockerfile -t remani-planner:noetic .
+DISPLAY=:0 REMANI_BUILD=1 ./docker/run_ir100_cr10_manual.sh
 ```
 
-### Compiling and Running
+如果镜像已经构建过，后续直接运行：
 
-```
-cd ${your catkin workspace}/src
-git clone -b master --single-branch https://github.com/SYSU-STAR/REMANI-Planner.git
-cd ..
-catkin_make -DCMAKE_BUILD_TYPE=Release
+```bash
+cd ~/tongji/REMANI-Planner
+DISPLAY=:0 REMANI_BUILD=0 ./docker/run_ir100_cr10_manual.sh
 ```
 
-1. Navigating in dense cuboids map
+脚本会启动 RViz、IR100/CR10 模型、横梁地图、碰撞检测和规划器。打开 RViz 后使用 **2D Nav Goal** 发送目标点。
 
-```
-source devel/setup.bash
-roslaunch remani_planner exp0.launch
-```
+如果主机不是 `:0` 显示器，将 `DISPLAY=:0` 改成实际值，例如 `DISPLAY=:1001`。
 
-You should see the simulation in rviz. You can use the `2D Nav Goal` to send a trigger to start navigation.
+## 查看规划日志
 
-<p align="center">
-  <img src="./attachment/exp0_0.gif"/>
-</p>
+日志中常见结果：
 
-
-2. Navigating through a bridge
-
-```
-source devel/setup.bash
-roslaunch remani_planner exp1.launch
+```text
+A* initialization status=2   # 找到轨迹
+reach goal                    # 轨迹执行完成
+NO_PATH                      # 规划失败
+collision type=1              # 机械臂与环境碰撞
+collision type=2              # 机械臂与底盘碰撞
+collision type=3              # 机械臂自碰撞
 ```
 
-<p align="center">
-  <img src="./attachment/exp0_1.gif"/>
-</p>
+规划耗时日志包括底盘 Kino-A*、机械臂联合搜索、机械臂 RRT、碰撞采样和轨迹优化阶段。
 
+## 原始 README
 
-## Customize your own Mobile Manipulator (MM)
-
-1. Make the following adjustments in the `remani_planner/mm_config/src/mm_config.cpp` file:
-   - Modify the `getAJointTran` function to calculate the homogeneous transformation between different frames of the manipulator.
-   - Modify the `setLinkPoint` function to set the position of collision spheres in the respective frame.
-   - Modify the `getMMMarkerArray` function based on the urdf file to generate the marker array for MM visualization.
-2. Adapt the `mm_param.yaml` file located in the `remani_planner/remani_planner/config/` directory to configure parameters specific to your MM.
-
-
-
-**Note**: We have provided an example for the [UR5](https://www.universal-robots.com/products/ur5-robot/) in our code. To use the UR5, simply follow these steps:
-
-1. Open the `mm_param.yaml` file located in the `remani_planner/plan_manage/config/` directory.
-2. Locate the `parameter` for `FastArmer` and comment it out by adding a "#" symbol at the beginning of the line.
-3. Uncomment the `parameter` for `UR5` by removing the "#" symbol at the beginning of the line.
-4. You are now ready to conduct above experiments with a mobile base incorporating the UR5 configuration.
-
-<p align="center">
-  <img src="./attachment/exp1_0.gif" width = "400" height = "225"/>
-  <img src="./attachment/exp1_1.gif" width = "400" height = "225"/>
-</p>
-
-## Acknowledgements
-
-We use [MINCO](https://github.com/ZJU-FAST-Lab/GCOPTER) as our trajectory representation.
-
-We borrow the framework from [AutoTrans](https://github.com/SYSU-STAR/AutoTrans).
-
-We would like to thank colleagues at [Huawei](https://www.huawei.com/en/) for their support for this work: Zehui Meng and Changjin Wang.
-
-## License
-
-The source code is released under the [GPLv3](https://www.gnu.org/licenses/) license.
-
-## Maintenance
-
-For any technical issues, please contact Chengkai Wu([chengkaiwuu@gmail.com](mailto:chengkaiwuu@gmail.com)) or Ruilin Wang(Ruilinin@outlook.com).
+原项目说明已保留在 [`README.original.md`](README.original.md) 中。
