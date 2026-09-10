@@ -8,6 +8,14 @@ using namespace Eigen;
 
 namespace remani_planner{
 
+namespace {
+struct ScopedKinoTiming {
+  const char *name; ros::WallTime start;
+  explicit ScopedKinoTiming(const char *n) : name(n), start(ros::WallTime::now()) {}
+  ~ScopedKinoTiming() { ROS_INFO("[Timing] %s=%.3f ms", name, (ros::WallTime::now()-start).toSec()*1000.0); }
+};
+}
+
 void KinoAstar::setParam(ros::NodeHandle& nh, const std::shared_ptr<GridMap> &env, const std::shared_ptr<MMConfig> &mm_config){
   sdf_map_ = env;
   Eigen::Vector3i map_size;
@@ -115,6 +123,7 @@ int KinoAstar::KinoAstarSearchAndGetSimplePath(const Eigen::VectorXd &start_pos,
                                                 const Eigen::VectorXd &end_pos, const Eigen::VectorXd &end_vel, double end_yaw, const bool end_gripper, const Eigen::Vector2d &init_ctrl, const int continous_failures_count,
                                                 std::vector<std::vector<Eigen::VectorXd>> &simple_path_container, std::vector<std::vector<double>> &yaw_list_container, 
                                                 std::vector<int> &singul_container, std::vector<Eigen::VectorXd> &t_list_container){
+  ScopedKinoTiming timing("KinoAstarSearchAndGetSimplePath");
   const ros::WallTime planning_start = ros::WallTime::now();
   reset();
   simple_path_container.clear();
@@ -395,6 +404,7 @@ void KinoAstar::displayLocalStartGoal(ros::Publisher &pub, const vector<Eigen::V
 }
 
 int KinoAstar::search(Eigen::VectorXd &start_state, const Eigen::VectorXd &end_state, const Eigen::Vector2d &init_ctrl){
+  ScopedKinoTiming timing("KinoAstar::search");
   bool isocc = false;
   bool initsearch = false;
   double start_time = ros::Time::now().toSec();

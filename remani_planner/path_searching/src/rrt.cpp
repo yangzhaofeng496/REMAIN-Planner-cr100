@@ -2,12 +2,24 @@
 
 namespace remani_planner{
 
+namespace {
+struct ScopedRrtTiming {
+  const char *name; ros::WallTime start;
+  explicit ScopedRrtTiming(const char *n) : name(n), start(ros::WallTime::now()) {}
+  ~ScopedRrtTiming() { ROS_INFO("[Timing] %s=%.3f ms", name, (ros::WallTime::now()-start).toSec()*1000.0); }
+};
+}
+
   int RrtPlanning::RRTSearchAndGetSimplePath(const std::vector<Eigen::VectorXd>& start_pt_list, const std::vector<double>& start_yaw_list, 
                                               const std::vector<Eigen::VectorXd>& end_pt_list, const std::vector<double>& end_yaw_list,
                                               const std::vector<double>& start_g_score_list, const std::vector<int>& start_layer_list, const std::vector<double>& end_g_score_list, const std::vector<int>& end_layer_list,
                                               const std::vector<int>& start_singul_list, const std::vector<int>& end_singul_list,
                                               std::vector<Eigen::VectorXd>& path, std::vector<double>& yaw_list, std::vector<double>& t_list)
   {
+    ScopedRrtTiming timing("RrtPlanning::RRTSearchAndGetSimplePath");
+    collision_check_calls_ = 0;
+    rewire_calls_ = 0;
+    nodes_created_ = 0;
     std::vector<Eigen::VectorXd> path_full;
     std::vector<double> t_list_full, yaw_list_full;
     if(start_pt_list.size() < 1){
@@ -23,6 +35,8 @@ namespace remani_planner{
     bool status = search(start_pt_list, start_yaw_list, end_pt_list, end_yaw_list, start_g_score_list, start_layer_list, end_g_score_list, end_layer_list, start_singul_list, end_singul_list);
 
     if (status == false){
+      ROS_INFO("[RRT] stats: nodes=%zu collision_checks=%zu rewire_calls=%zu status=failure",
+               nodes_created_, collision_check_calls_, rewire_calls_);
       return status;
       // cout << "[RRT replan]: RRT search fail!" << endl;
     }else{
@@ -49,6 +63,8 @@ namespace remani_planner{
       t_total = 0.0;
     }
 
+    ROS_INFO("[RRT] stats: nodes=%zu collision_checks=%zu rewire_calls=%zu status=success",
+             nodes_created_, collision_check_calls_, rewire_calls_);
     return status;
   }
 
@@ -56,6 +72,7 @@ namespace remani_planner{
                           const std::vector<Eigen::VectorXd>& end_pt_list, const std::vector<double>& end_yaw_list,
                           const std::vector<double>& start_g_score_list, const std::vector<int>& start_layer_list, const std::vector<double>& end_g_score_list, const std::vector<int>& end_layer_list,
                           const std::vector<int>& start_singul_list, const std::vector<int>& end_singul_list){
+    ScopedRrtTiming timing("RrtPlanning::search");
     // std::cout << "[sample mani]: Search begin. start: " << start_state.transpose() << " end: " << end_state.transpose() << std::endl;
     ros::Time time_1 = ros::Time::now();
     PathNodeRRTPtr start_node, end_node;
@@ -178,7 +195,7 @@ namespace remani_planner{
           ++tree_count_;
         else 
           ++anti_tree_count_;
-        rewire(q_new, 0.45);
+        if (enable_rrt_rewire_) rewire(q_new, 0.45);
 
         q_near_1 = near(q_new->state, q_new->yaw, !dir);
         if(q_near_1 == nullptr){
@@ -218,7 +235,7 @@ namespace remani_planner{
           linkNode(q_near_1, q_new_1);
           q_new_1->node_state = q_near_1->node_state;
           // q_new_1->g_score = q_near_1->g_score + estimateHeuristic(q_near_1, q_new_1);
-          rewire(q_new_1, 0.45);
+          if (enable_rrt_rewire_) rewire(q_new_1, 0.45);
           if(q_new_1->node_state == PathNodeRRT::IN_TREE)
             ++tree_count_;
           else 
@@ -242,7 +259,7 @@ namespace remani_planner{
               linkNode(q_new_1, q_new_2);
               q_new_2->node_state = q_new_1->node_state;
               // q_new_2->g_score = q_new_1->g_score + estimateHeuristic(q_new_1, q_new_2);
-              rewire(q_new_2, 0.45);
+              if (enable_rrt_rewire_) rewire(q_new_2, 0.45);
               if(q_new_2->node_state == PathNodeRRT::IN_TREE)
                 ++tree_count_;
               else 
@@ -315,6 +332,7 @@ namespace remani_planner{
   }
 
   PathNodeRRTPtr RrtPlanning::initNode(const Eigen::VectorXd &s, const double yaw){
+    ++nodes_created_;
     auto it = node_pool_.find(calculateValue(s, yaw));
     if(it != node_pool_.end()){
       return it->second;
@@ -498,6 +516,8 @@ namespace remani_planner{
   }
 
   void RrtPlanning::rewire(PathNodeRRTPtr q_new, double near_time){
+    ++rewire_calls_;
+    ScopedRrtTiming timing("RrtPlanning::rewire");
     std::vector<PathNodeRRTPtr> neighbour;
     PathNodeRRTPtr temp;
     bool flag;
@@ -524,6 +544,17 @@ namespace remani_planner{
       neighbour.push_back(temp);
     }
 
+    if (rrt_max_rewire_neighbors_ > 0 &&
+        static_cast<int>(neighbour.size()) > rrt_max_rewire_neighbors_) {
+      std::nth_element(neighbour.begin(),
+                       neighbour.begin() + rrt_max_rewire_neighbors_,
+                       neighbour.end(),
+                       [q_new](const PathNodeRRTPtr a, const PathNodeRRTPtr b) {
+                         return (a->state - q_new->state).squaredNorm() <
+                                (b->state - q_new->state).squaredNorm();
+                       });
+      neighbour.resize(rrt_max_rewire_neighbors_);
+    }
     num = neighbour.size();
     if(num < 1)
       return;
@@ -756,6 +787,7 @@ namespace remani_planner{
   }
 
   bool RrtPlanning::checkcollision(PathNodeRRTPtr& cur_state){
+    ++collision_check_calls_;
     Eigen::Vector3d xt;
     xt[0] = cur_state->state[0];
     xt[1] = cur_state->state[1];
@@ -768,6 +800,7 @@ namespace remani_planner{
   // }
 
   bool RrtPlanning::checkcollision(PathNodeRRTPtr& cur_state, const Eigen::VectorXd& next_state, const double next_yaw){
+    ++collision_check_calls_;
     
     if(cur_state->node_state == PathNodeRRT::NODE_STATE::COLLISION){
       return true;
@@ -813,14 +846,14 @@ namespace remani_planner{
     Eigen::Vector3d xt;
     std::vector<double> reals;
     double dis = dubins_curve_->distance(from(), to());
-    int check_num_car = ceil(dis / 0.01);
+    int check_num_car = ceil(dis / rrt_collision_pos_resolution_);
     
     
     Eigen::VectorXd delta_theta = next_state.tail(manipulator_dof_) - cur_state->state.tail(manipulator_dof_);
     double max_delta_theta = delta_theta.lpNorm<Eigen::Infinity>();
-    int check_num_theta = ceil(max_delta_theta / 0.01);
+    int check_num_theta = ceil(max_delta_theta / rrt_collision_joint_resolution_);
     int piece_num_temp = std::max(check_num_car, check_num_theta);
-    piece_num_temp = std::max(piece_num_temp, 10);
+    piece_num_temp = std::max(piece_num_temp, rrt_collision_min_checks_);
     for(int i = 0; i < piece_num_temp; ++i){
       double temp_i = (double)i / (double)piece_num_temp;
       dubins_curve_->interpolate(from(), to(), temp_i, s());// 获得对应长度的中间点
@@ -856,6 +889,7 @@ namespace remani_planner{
   }
 
   bool RrtPlanning::checkcollision(PathNodeRRTPtr& cur_state, PathNodeRRTPtr& next_state){
+    ++collision_check_calls_;
     if(cur_state->node_state == PathNodeRRT::NODE_STATE::COLLISION || next_state->node_state == PathNodeRRT::NODE_STATE::COLLISION){
       return true;
     }
@@ -1065,6 +1099,18 @@ namespace remani_planner{
     nh.param("search/max_sample_time", max_sample_time_, 0.0);
     nh.param("search/max_loop_num", max_loop_num_, 100);
     nh.param("search/time_resolution", time_resolution_, 1.0);
+    nh.param("search/enable_rrt_rewire", enable_rrt_rewire_, true);
+    nh.param("search/rrt_max_rewire_neighbors", rrt_max_rewire_neighbors_, 0);
+    nh.param("search/rrt_collision_pos_resolution", rrt_collision_pos_resolution_, 0.01);
+    nh.param("search/rrt_collision_joint_resolution", rrt_collision_joint_resolution_, 0.01);
+    nh.param("search/rrt_collision_min_checks", rrt_collision_min_checks_, 10);
+    rrt_collision_pos_resolution_ = std::max(rrt_collision_pos_resolution_, 1.0e-4);
+    rrt_collision_joint_resolution_ = std::max(rrt_collision_joint_resolution_, 1.0e-4);
+    rrt_collision_min_checks_ = std::max(rrt_collision_min_checks_, 1);
+    ROS_INFO("[RRT profile config] rewire=%s max_neighbors=%d pos_res=%.4f joint_res=%.4f min_checks=%d",
+             enable_rrt_rewire_ ? "true" : "false", rrt_max_rewire_neighbors_,
+             rrt_collision_pos_resolution_, rrt_collision_joint_resolution_,
+             rrt_collision_min_checks_);
     nh.param("optimization/self_safe_margin", self_safe_margin_, 0.1);
     nh.param("optimization/safe_margin_mani", safe_margin_mani_, 0.1);
 

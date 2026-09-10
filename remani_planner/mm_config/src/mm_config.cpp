@@ -5,6 +5,14 @@
 namespace remani_planner
 {
 
+namespace {
+struct ScopedCollisionTiming {
+  const char *name; ros::WallTime start;
+  explicit ScopedCollisionTiming(const char *n) : name(n), start(ros::WallTime::now()) {}
+  ~ScopedCollisionTiming() { ROS_INFO_THROTTLE(1.0, "[Timing] %s latest=%.3f ms", name, (ros::WallTime::now()-start).toSec()*1000.0); }
+};
+}
+
 void MMConfig::setParam(ros::NodeHandle &nh, const std::shared_ptr<GridMap>& env){
     grid_map_ = env;
     setParam(nh);
@@ -956,6 +964,7 @@ bool MMConfig::checkManiManiCollision(Eigen::VectorXd mani_state, bool safe, dou
 }
 
 bool MMConfig::checkManicollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_state, bool safe){
+    ScopedCollisionTiming timing("mm_config::checkManicollision");
     double min_dist;
     if(checkManiObsCollision(car_state, mani_state, safe, min_dist)){
         return true;
@@ -970,6 +979,7 @@ bool MMConfig::checkManicollision(Eigen::Vector3d car_state, Eigen::VectorXd man
 }
 
 bool MMConfig::checkcollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_state, bool safe, int &coll_type /*0: car, 1: mani, 2: car-mani, 3: mani-mani*/){
+    ScopedCollisionTiming timing("mm_config::checkcollision");
     double min_dist;
     if(checkCarObsCollision(car_state, true, safe, min_dist)){
         coll_type = 0;
@@ -992,6 +1002,7 @@ bool MMConfig::checkcollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_st
 }
 
 bool MMConfig::checkcollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_state, bool safe){
+    ScopedCollisionTiming timing("mm_config::checkcollision");
     double min_dist;
     if(checkCarObsCollision(car_state, true, safe, min_dist)){
         return true;

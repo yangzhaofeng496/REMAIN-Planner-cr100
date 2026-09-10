@@ -1,12 +1,23 @@
 #include "path_searching/sample_mani_RRT.h"
 
 namespace mani_sample{
+namespace {
+struct ScopedSampleTiming {
+  const char *name; ros::WallTime start;
+  explicit ScopedSampleTiming(const char *n) : name(n), start(ros::WallTime::now()) {}
+  ~ScopedSampleTiming() { ROS_INFO("[Timing] %s=%.3f ms", name, (ros::WallTime::now()-start).toSec()*1000.0); }
+};
+}
   bool SampleMani::sampleManiSearch(const bool astar_succ, const Eigen::VectorXd &start_state, const Eigen::VectorXd &end_state,
                     const std::vector<Eigen::Vector3d> &car_state_list, const std::vector<Eigen::Vector3d> &car_state_list_check, 
                     const std::vector<double> &t_list, const std::vector<int> &singul_container, const int start_singul,// size = t_list.size()
                     // output
                     std::vector<std::vector<Eigen::VectorXd>> &simple_path_container, std::vector<int> &singul_container_new,
                     std::vector<std::vector<double>> &yaw_list_container, std::vector<Eigen::VectorXd> &t_list_container){
+    ScopedSampleTiming timing("SampleMani::sampleManiSearch");
+    collision_check_calls_ = 0;
+    edge_interpolation_checks_ = 0;
+    nodes_created_ = 0;
     simple_path_container.clear();
     singul_container_new.clear();
     yaw_list_container.clear();
@@ -18,11 +29,16 @@ namespace mani_sample{
     const double stationary_arm_delta = (start_state - end_state).lpNorm<Eigen::Infinity>();
     if (stationary_arm_delta < 1.0e-6 &&
         !car_state_list.empty()) {
+      // The stationary-arm branch does not call init(), so publish a valid
+      // layer count for profiling instead of the uninitialized member value.
+      max_index_ = static_cast<int>(car_state_list.size());
       const ros::WallTime collision_check_start = ros::WallTime::now();
       bool stationary_arm_safe = true;
       // Check every dense front-end sample. Sparse checking can miss a
       // collision on a long base path even though the endpoint is clear.
       for (size_t i = 0; i < car_state_list_check.size(); ++i) {
+        ++edge_interpolation_checks_;
+        ++collision_check_calls_;
         int collision_type = -1;
         if (mm_config_->checkcollision(car_state_list_check[i], start_state, false, collision_type)) {
           ROS_WARN("[SampleMani] stationary-arm collision type=%d at sample=%zu/%zu",
@@ -60,6 +76,8 @@ namespace mani_sample{
         ROS_INFO("[SampleMani] stationary-arm fast path: samples=%zu, collision_checks=%zu, time=%.3f ms",
                  path.size(), car_state_list_check.size(),
                  (ros::WallTime::now() - collision_check_start).toSec() * 1000.0);
+        ROS_INFO("[SampleMani] stats: max_index=%d collision_checks=%zu edge_interpolations=%zu nodes=%zu fallback_rrt=false",
+                 max_index_, collision_check_calls_, edge_interpolation_checks_, nodes_created_);
         return true;
       }
       ROS_WARN("[SampleMani] stationary-arm fast path rejected: samples=%zu, time=%.3f ms",
@@ -80,6 +98,9 @@ namespace mani_sample{
              mani_status ? "success" : "failure",
              car_state_list.size(), car_state_list_check.size());
 
+    ROS_INFO("[SampleMani] stats: max_index=%d collision_checks=%zu edge_interpolations=%zu nodes=%zu fallback_rrt=%s",
+             max_index_, collision_check_calls_, edge_interpolation_checks_, nodes_created_,
+             mani_status ? "true" : "false");
     // ROS_ERROR("=====================1");
     if(mani_status && astar_succ){
       getTraj(mani_path);
@@ -449,6 +470,7 @@ namespace mani_sample{
   }
 
   bool SampleMani::search(const Eigen::VectorXd &start_state, const Eigen::VectorXd &end_state){
+    ScopedSampleTiming timing("SampleMani::search");
     // std::cout << "[sample mani]: Search begin. start: " << start_state.transpose() << " end: " << end_state.transpose() << std::endl;
     ros::Time time_1 = ros::Time::now();
     std::uniform_real_distribution<double> goal_dis(0.0, 1.0);
@@ -708,6 +730,7 @@ namespace mani_sample{
   }
 
   ManiPathNodePtr SampleMani::initNode(int idx, const Eigen::VectorXd &s){
+    ++nodes_created_;
     string key = calculateValue(idx, s);
     auto it = node_pool_.find(key);
     if(it != node_pool_.end()){
@@ -718,6 +741,7 @@ namespace mani_sample{
     node->node_state = ManiPathNode::NODE_STATE::EXPAND;
     node->state = s;
     
+    ++collision_check_calls_;
     if(mm_config_->checkManicollision(car_state_list_[node->index], node->state, false))
     {
       node->node_state = ManiPathNode::NODE_STATE::COLLISION;
@@ -1217,11 +1241,13 @@ namespace mani_sample{
 
     Eigen::Vector3d xt;
     for (int i = 1; i < check_num_; ++i){   
+      ++edge_interpolation_checks_;
       xt = car_state_list_check_[index * check_num_ + i];
       T_q_now << cos(xt[2]), -sin(xt[2]), 0, xt(0),
                  sin(xt[2]),  cos(xt[2]), 0, xt(1),
                  0,           0,          1, 0,
                  0,           0,          0, 1;
+      ++collision_check_calls_;
       if(mm_config_->checkManicollision(xt, (cur_state->state + (next_state->state - cur_state->state) * double(i) / double(check_num_)), false)){
         return true;
       }

@@ -86,6 +86,9 @@ namespace remani_planner{
     int check_num_;
     double goal_rate_;
     int max_loop_num_;
+    size_t collision_check_calls_{0};
+    size_t rewire_calls_{0};
+    size_t nodes_created_{0};
     std::vector<double> max_size_, min_size_;
     Eigen::Matrix4d T_q_0_;
     std::vector<Eigen::Matrix4Xd> manipulator_link_pts_;
@@ -94,6 +97,11 @@ namespace remani_planner{
     std::normal_distribution<double> norm_dis_;
     ompl::base::StateSpacePtr dubins_curve_;
     double time_resolution_;
+    bool enable_rrt_rewire_{true};
+    int rrt_max_rewire_neighbors_{0}; // <=0 preserves the unlimited search
+    double rrt_collision_pos_resolution_{0.01};
+    double rrt_collision_joint_resolution_{0.01};
+    int rrt_collision_min_checks_{10};
 
     bool checkcollision(PathNodeRRTPtr& cur_state, PathNodeRRTPtr& next_state);
     bool checkcollision(PathNodeRRTPtr& cur_state, const Eigen::VectorXd& next_state, const double next_yaw);

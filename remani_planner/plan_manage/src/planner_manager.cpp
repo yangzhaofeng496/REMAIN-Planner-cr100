@@ -86,6 +86,17 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
     bool global_plan;
     nh.param("fsm/global_plan", global_plan, false);
     if(global_plan) pp_.planning_horizen_ = 1e3;
+
+    int check_num = 0, max_loop_num = 0;
+    double max_mani_search_time = 0.0, max_sample_time = 0.0;
+    nh.param("search/check_num", check_num, 0);
+    nh.param("search/max_loop_num", max_loop_num, 0);
+    nh.param("search/max_mani_search_time", max_mani_search_time, 0.0);
+    nh.param("search/max_sample_time", max_sample_time, 0.0);
+    ROS_INFO("[Planner profile config] global_plan=%s planning_horizon=%.3f check_num=%d "
+             "max_mani_search_time=%.3f max_sample_time=%.3f max_loop_num=%d",
+             global_plan ? "true" : "false", pp_.planning_horizen_, check_num,
+             max_mani_search_time, max_sample_time, max_loop_num);
     
     nh.param("mm/mobile_base_dof", pp_.mobile_base_dim_, -1);
     nh.param("mm/manipulator_dof", pp_.manipulator_dim_, -1);
@@ -148,11 +159,19 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
                                                     const int continous_failures_count)
   {
     static bool flag_first_call = true;
+    static unsigned long planning_call_count = 0;
+    ++planning_call_count;
+    ROS_INFO("[Planner profile] computeInitReferenceState call=%lu flag_first_call=%s flag_polyInit=%s",
+             planning_call_count, flag_first_call ? "true" : "false", flag_polyInit ? "true" : "false");
     initMJO_container.clear();
     singul_container.clear();
 
     /*** case 1: use A* initialization ***/
-    if (flag_first_call || flag_polyInit || true){
+    // Rebuild the front-end only for the first plan or when explicitly
+    // requested.  The unconditional `|| true` forced every replan through
+    // the expensive coupled A* search and made warm-start initialization
+    // unreachable.
+    if (flag_first_call || flag_polyInit){
       // ROS_INFO("get init from search");
       flag_first_call = false;
       /* basic params */
