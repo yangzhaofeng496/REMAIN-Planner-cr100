@@ -5,6 +5,7 @@
   <arg name="planner_param_file" value="$(find remani_planner)/config/remani_planner_param_manual.yaml"/>
   <arg name="override_planner_profile" default="false"/>
   <arg name="profile_global_plan" default="true"/>
+  <arg name="profile_thresh_no_replan_meter" default="2.5"/>
   <arg name="profile_planning_horizon" default="5.0"/>
   <arg name="profile_max_loop_num" default="5000"/>
   <arg name="profile_max_sample_time" default="0.2"/>
@@ -30,6 +31,7 @@
     <arg name="load_map" value="$(arg load_map)"/>
     <arg name="override_planner_profile" value="$(arg override_planner_profile)"/>
     <arg name="profile_global_plan" value="$(arg profile_global_plan)"/>
+    <arg name="profile_thresh_no_replan_meter" value="$(arg profile_thresh_no_replan_meter)"/>
     <arg name="profile_planning_horizon" value="$(arg profile_planning_horizon)"/>
     <arg name="profile_max_loop_num" value="$(arg profile_max_loop_num)"/>
     <arg name="profile_max_sample_time" value="$(arg profile_max_sample_time)"/>
