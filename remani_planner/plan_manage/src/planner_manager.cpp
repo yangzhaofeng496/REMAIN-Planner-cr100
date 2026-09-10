@@ -556,6 +556,43 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
                                                             optCps_container, optWps_container, optT_container, optEECps_container);
     t_opt = ros::Time::now() - t_start;
 
+    // Independent final safety gate.  Search-time collision sampling may be
+    // deliberately coarse, and the optimizer changes the seed trajectory;
+    // therefore validate the exact optimized trajectory at high resolution
+    // immediately before it can be published to the controller.
+    if (flag_success) {
+      const ros::WallTime safety_start = ros::WallTime::now();
+      size_t safety_checks = 0;
+      bool safety_ok = true;
+      for (unsigned int i = 0; i < singul_container.size() && safety_ok; ++i) {
+        const auto traj = (*ploy_traj_opt_->getMinSnapOptContainerPtr())[i].getTraj(singul_container[i]);
+        const double duration = traj.getTotalDuration();
+        for (double t = 0.0; t <= duration + 1.0e-9; t += 0.01) {
+          const Eigen::VectorXd state = traj.getPos(std::min(t, duration));
+          double yaw = (i == 0 && t < 1.0e-9) ? start_yaw : 0.0;
+          const Eigen::VectorXd velocity = traj.getVel(std::min(t, duration));
+          if (velocity.head(2).norm() > 1.0e-4)
+            yaw = std::atan2(velocity(1), velocity(0));
+          int collision_type = -1;
+          ++safety_checks;
+          if (mm_config_->checkcollision(Eigen::Vector3d(state(0), state(1), yaw),
+                                         state.tail(pp_.manipulator_dim_), false,
+                                         collision_type)) {
+            ROS_ERROR("[Planner] final high-precision safety check failed: segment=%u t=%.3f type=%d",
+                      i, t, collision_type);
+            safety_ok = false;
+            break;
+          }
+        }
+      }
+      const double safety_time_ms = (ros::WallTime::now() - safety_start).toSec() * 1000.0;
+      ROS_INFO("[Planner] final high-precision safety check: ok=%s checks=%zu time=%.3f ms",
+               safety_ok ? "true" : "false", safety_checks,
+               safety_time_ms);
+      t_opt += ros::Duration(safety_time_ms / 1000.0);
+      flag_success = safety_ok;
+    }
+
     // calculate data
     double snap_cost = 0.0, traj_dura = 0.0;
     Eigen::VectorXd traj_len(7);
