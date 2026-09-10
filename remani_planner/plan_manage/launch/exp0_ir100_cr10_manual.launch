@@ -17,6 +17,7 @@
   <arg name="profile_enable_mani_oneshot" default="true"/>
   <arg name="profile_max_oneshot_calls" default="0"/>
   <arg name="profile_oneshot_stride" default="1"/>
+  <arg name="profile_oneshot_max_jump_layers" default="0"/>
 
   <param name="robot_description" command="$(find xacro)/xacro '$(find ir100_description)/urdf/ir100_robot.xacro'"/>
 
@@ -41,6 +42,7 @@
     <arg name="profile_enable_mani_oneshot" value="$(arg profile_enable_mani_oneshot)"/>
     <arg name="profile_max_oneshot_calls" value="$(arg profile_max_oneshot_calls)"/>
     <arg name="profile_oneshot_stride" value="$(arg profile_oneshot_stride)"/>
+    <arg name="profile_oneshot_max_jump_layers" value="$(arg profile_oneshot_max_jump_layers)"/>
   </include>
 
   <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher">

@@ -78,6 +78,7 @@ namespace mani_sample {
     bool enable_mani_oneshot_{true};
     int max_oneshot_calls_{0};
     int oneshot_stride_{1};
+    int oneshot_max_jump_layers_{0}; // <=0 preserves unlimited ancestor search
     int oneshot_calls_{0};
     double max_mani_search_time_;
     size_t collision_check_calls_{0};

@@ -40,6 +40,7 @@
     <arg name="profile_enable_mani_oneshot" default="true"/>
     <arg name="profile_max_oneshot_calls" default="0"/>
     <arg name="profile_oneshot_stride" default="1"/>
+    <arg name="profile_oneshot_max_jump_layers" default="0"/>
 
     <!-- main algorithm params -->
     <include file="$(find remani_planner)/launch/advanced_param_sim.xml">
@@ -73,6 +74,7 @@
       <arg name="profile_enable_mani_oneshot" value="$(arg profile_enable_mani_oneshot)"/>
       <arg name="profile_max_oneshot_calls" value="$(arg profile_max_oneshot_calls)"/>
       <arg name="profile_oneshot_stride" value="$(arg profile_oneshot_stride)"/>
+      <arg name="profile_oneshot_max_jump_layers" value="$(arg profile_oneshot_max_jump_layers)"/>
       <!-- topic of point cloud measurement, such as from LIDAR  -->
       <!-- don't set camera pose and depth, if you already set this one! -->
       <arg name="cloud_topic" value="pcl_render_node/cloud"/>

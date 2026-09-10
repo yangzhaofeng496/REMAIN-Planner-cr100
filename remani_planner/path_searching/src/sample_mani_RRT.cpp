@@ -1063,7 +1063,11 @@ struct ScopedSampleTiming {
     Eigen::VectorXd vel(manipulator_dof_);
     bool is_occ = false;
     std::vector<ManiPathNodePtr> node_list;
+    int jump_layers = 0;
     for(;temp != nullptr; temp = temp->parent){
+      ++jump_layers;
+      if (oneshot_max_jump_layers_ > 0 && jump_layers > oneshot_max_jump_layers_)
+        break;
       node_list.clear();
       is_occ = false;
       t_total += t_list_[temp->index];
@@ -1376,8 +1380,10 @@ struct ScopedSampleTiming {
     nh.param("search/max_oneshot_calls", max_oneshot_calls_, 0);
     nh.param("search/oneshot_stride", oneshot_stride_, 1);
     if (oneshot_stride_ < 1) oneshot_stride_ = 1;
-    ROS_INFO("[SampleMani profile config] oneshot=%s",
-             enable_mani_oneshot_ ? "true" : "false");
+    nh.param("search/oneshot_max_jump_layers", oneshot_max_jump_layers_, 0);
+    ROS_INFO("[SampleMani profile config] oneshot=%s stride=%d max_jump_layers=%d",
+             enable_mani_oneshot_ ? "true" : "false", oneshot_stride_,
+             oneshot_max_jump_layers_);
     nh.param("search/max_mani_search_time", max_mani_search_time_, 0.1);
     nh.param("optimization/self_safe_margin", self_safe_margin_, 0.1);
     nh.param("optimization/safe_margin_mani", safe_margin_mani_, 0.1);
