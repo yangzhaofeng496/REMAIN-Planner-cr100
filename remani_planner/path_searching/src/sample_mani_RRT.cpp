@@ -1126,7 +1126,8 @@ struct ScopedSampleTiming {
     if(q->parent){
       trajShot(q->parent);
     }
-    if (max_oneshot_calls_ <= 0 || oneshot_calls_ < max_oneshot_calls_) {
+    const bool on_stride = oneshot_stride_ <= 1 || (q->index % oneshot_stride_ == 0) || q == end_node_;
+    if (on_stride && (max_oneshot_calls_ <= 0 || oneshot_calls_ < max_oneshot_calls_)) {
       ++oneshot_calls_;
       oneShot(q);
     }
@@ -1284,9 +1285,10 @@ struct ScopedSampleTiming {
     if (enable_mani_oneshot_) {
       trajShot(node);
     }
-    ROS_INFO("[SampleMani] trajShot/oneShot enabled=%s calls=%d max_calls=%d time=%.3f ms",
+    ROS_INFO("[SampleMani] trajShot/oneShot enabled=%s calls=%d max_calls=%d stride=%d time=%.3f ms",
              enable_mani_oneshot_ ? "true" : "false",
              oneshot_calls_, max_oneshot_calls_,
+             oneshot_stride_,
              (ros::WallTime::now() - oneshot_start).toSec() * 1000.0);
     while(node != nullptr){
       traj.push_back(node->state);
@@ -1372,6 +1374,8 @@ struct ScopedSampleTiming {
     nh.param("search/max_loop_num", max_loop_num_, 500);
     nh.param("search/enable_mani_oneshot", enable_mani_oneshot_, true);
     nh.param("search/max_oneshot_calls", max_oneshot_calls_, 0);
+    nh.param("search/oneshot_stride", oneshot_stride_, 1);
+    if (oneshot_stride_ < 1) oneshot_stride_ = 1;
     ROS_INFO("[SampleMani profile config] oneshot=%s",
              enable_mani_oneshot_ ? "true" : "false");
     nh.param("search/max_mani_search_time", max_mani_search_time_, 0.1);

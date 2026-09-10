@@ -27,6 +27,7 @@
 	<arg name="profile_rrt_collision_min_checks" default="10"/>
 	<arg name="profile_enable_mani_oneshot" default="true"/>
 	<arg name="profile_max_oneshot_calls" default="0"/>
+	<arg name="profile_oneshot_stride" default="1"/>
 
 	<arg name="cx"/>
 	<arg name="cy"/>
@@ -50,6 +51,7 @@
 		<param if="$(arg override_planner_profile)" name="search/rrt_collision_min_checks" value="$(arg profile_rrt_collision_min_checks)" type="int"/>
 		<param if="$(arg override_planner_profile)" name="search/enable_mani_oneshot" value="$(arg profile_enable_mani_oneshot)" type="bool"/>
 		<param if="$(arg override_planner_profile)" name="search/max_oneshot_calls" value="$(arg profile_max_oneshot_calls)" type="int"/>
+		<param if="$(arg override_planner_profile)" name="search/oneshot_stride" value="$(arg profile_oneshot_stride)" type="int"/>
 
 		<remap from="~gripper_cmd" to="$(arg gripper_cmd_topic)"/>
 		<remap from="~gripper_state" to="$(arg gripper_state_topic)"/>
