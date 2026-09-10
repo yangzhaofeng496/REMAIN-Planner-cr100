@@ -24,6 +24,7 @@
 	<arg name="profile_rrt_collision_pos_resolution" default="0.01"/>
 	<arg name="profile_rrt_collision_joint_resolution" default="0.01"/>
 	<arg name="profile_rrt_collision_min_checks" default="10"/>
+	<arg name="profile_enable_mani_oneshot" default="true"/>
 
 	<arg name="cx"/>
 	<arg name="cy"/>
@@ -44,6 +45,7 @@
 		<param if="$(arg override_planner_profile)" name="search/rrt_collision_pos_resolution" value="$(arg profile_rrt_collision_pos_resolution)" type="double"/>
 		<param if="$(arg override_planner_profile)" name="search/rrt_collision_joint_resolution" value="$(arg profile_rrt_collision_joint_resolution)" type="double"/>
 		<param if="$(arg override_planner_profile)" name="search/rrt_collision_min_checks" value="$(arg profile_rrt_collision_min_checks)" type="int"/>
+		<param if="$(arg override_planner_profile)" name="search/enable_mani_oneshot" value="$(arg profile_enable_mani_oneshot)" type="bool"/>
 
 		<remap from="~gripper_cmd" to="$(arg gripper_cmd_topic)"/>
 		<remap from="~gripper_state" to="$(arg gripper_state_topic)"/>
