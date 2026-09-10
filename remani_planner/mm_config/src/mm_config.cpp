@@ -670,6 +670,7 @@ void MMConfig::getJointTMat(const Eigen::VectorXd &theta, std::vector<Eigen::Mat
 }
 
 bool MMConfig::checkCarObsCollision(Eigen::Vector3d car_state, bool precise, bool safe, double &min_dist){
+    ScopedCollisionTiming timing("mm_config::checkCarObsCollision");
     std::vector<Eigen::Vector3d> car_pts;
     if (use_urdf_collision_mesh_ && urdf_collision_model_ &&
         !urdf_collision_model_->linkSamples("base_link").empty()) {
@@ -706,6 +707,7 @@ bool MMConfig::checkCarObsCollision(Eigen::Vector3d car_state, bool precise, boo
 }
 
 bool MMConfig::checkManiObsCollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_state, bool safe, double &min_dist){
+    ScopedCollisionTiming timing("mm_config::checkManiObsCollision");
     Eigen::Matrix4d T_q = Eigen::Matrix4d::Identity();
     T_q(0, 0) = cos(car_state(2));
     T_q(0, 1) = -sin(car_state(2));
@@ -805,6 +807,7 @@ bool MMConfig::checkManiObsCollision(Eigen::Vector3d car_state, Eigen::VectorXd 
 }
 
 bool MMConfig::checkCarManiCollision(Eigen::VectorXd mani_state, bool safe, double &min_dist){
+    ScopedCollisionTiming timing("mm_config::checkCarManiCollision");
     // Mesh samples already represent the physical thickness of both bodies.
     // Do not add the legacy sphere radii on top of them, or valid clearances
     // near the arm mounting area are reported as collisions.
@@ -872,6 +875,7 @@ bool MMConfig::checkCarManiCollision(Eigen::VectorXd mani_state, bool safe, doub
 }
 
 bool MMConfig::checkManiManiCollision(Eigen::VectorXd mani_state, bool safe, double &min_dist){
+    ScopedCollisionTiming timing("mm_config::checkManiManiCollision");
     if (use_urdf_collision_mesh_ && urdf_collision_model_ &&
         mani_state.size() == manipulator_dof_) {
         std::vector<Eigen::Matrix4d> link_tf;
