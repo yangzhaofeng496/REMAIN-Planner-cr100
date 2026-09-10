@@ -1,6 +1,7 @@
 #include "mm_config/mm_config.hpp"
 #include <kdl_parser/kdl_parser.hpp>
 #include <urdf/model.h>
+#include <limits>
 
 namespace remani_planner
 {
@@ -828,12 +829,35 @@ bool MMConfig::checkCarManiCollision(Eigen::VectorXd mani_state, bool safe, doub
     T_joint.clear();
     getJointTrans(mani_state, T_joint, T_joint_grad_nouse);
     int car_pts_size = car_pts.size();
+    Eigen::Vector3d car_min = Eigen::Vector3d::Constant(std::numeric_limits<double>::infinity());
+    Eigen::Vector3d car_max = Eigen::Vector3d::Constant(-std::numeric_limits<double>::infinity());
+    for (const auto &p : car_pts) {
+        car_min = car_min.cwiseMin(p);
+        car_max = car_max.cwiseMax(p);
+    }
     int pts_size;
     Eigen::Matrix4d T_now = T_q_0_;
     auto check_arm_link = [&](const std::string &name, const Eigen::Matrix4d &T) {
         if (!use_urdf_collision_mesh_ || !urdf_collision_model_)
             return false;
-        for (const auto &local : urdf_collision_model_->linkSamples(name)) {
+        const auto &samples = urdf_collision_model_->linkSamples(name);
+        Eigen::Vector3d link_min = Eigen::Vector3d::Constant(std::numeric_limits<double>::infinity());
+        Eigen::Vector3d link_max = Eigen::Vector3d::Constant(-std::numeric_limits<double>::infinity());
+        for (const auto &local : samples) {
+            const Eigen::Vector3d p =
+                (T * Eigen::Vector4d(local.x(), local.y(), local.z(), 1.0)).head(3);
+            link_min = link_min.cwiseMin(p);
+            link_max = link_max.cwiseMax(p);
+        }
+        // Exact distance checks below remain unchanged.  This conservative
+        // AABB test only rejects pairs whose coordinate intervals are already
+        // farther apart than the collision threshold.
+        for (int axis = 0; axis < 3; ++axis) {
+            if (link_max(axis) < car_min(axis) - safe_dist ||
+                car_max(axis) < link_min(axis) - safe_dist)
+                return false;
+        }
+        for (const auto &local : samples) {
             pt_on_link = (T * Eigen::Vector4d(local.x(), local.y(), local.z(), 1.0)).head(3);
             for (const auto &base_pt : car_pts) {
                 if ((pt_on_link - base_pt).norm() < safe_dist) {
