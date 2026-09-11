@@ -34,6 +34,11 @@ catkin_package(
 #  DEPENDS system_lib
 )
 
+catkin_install_python(PROGRAMS
+  scripts/static_pcd_publisher.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
 include_directories(
   include
   SYSTEM

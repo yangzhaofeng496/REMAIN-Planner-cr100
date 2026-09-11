@@ -1,0 +1,38 @@
+<launch>
+  <arg name="pcd_file"
+       default="$(find remani_planner)/../../scans_bottom_xyzRemove_filtered/scansdibu_xyzRemove_filtered_1cm.pcd"/>
+  <!-- A static world-frame PCD must enter GridMap through the global-map
+       callback on /map_generator/global_cloud, not through the body-frame
+       depth/cloud fusion topic /pcl_render_node/cloud. -->
+  <arg name="pcd_topic" default="/map_generator/global_cloud"/>
+  <arg name="voxel_leaf_size" default="0.0"/>
+  <!-- Default placement centres the locomotive cloud roughly 3 m in front of
+       the robot and inside the 20x8x3 m map.  Adjust for the real setup. -->
+  <arg name="twc_tx" default="-7.9"/>
+  <arg name="twc_ty" default="7.05"/>
+  <arg name="twc_tz" default="0.5"/>
+  <arg name="twc_roll" default="0.0"/>
+  <arg name="twc_pitch" default="0.0"/>
+  <arg name="twc_yaw" default="0.0"/>
+
+  <!-- Reuse the complete IR100+CR10 simulator/planner/RViz launch, but do
+       not start the synthetic test-bar map. -->
+  <include file="$(find remani_planner)/launch/exp0_ir100_cr10_manual.launch">
+    <arg name="load_map" value="false"/>
+  </include>
+
+  <!-- T_world_cloud maps the PCD frame onto world; the PCD file is never
+       rewritten.  Optionally voxel-downsample the environment cloud. -->
+  <node pkg="remani_planner" type="static_pcd_publisher.py"
+        name="static_pcd_publisher" output="screen">
+    <param name="pcd_file" value="$(arg pcd_file)"/>
+    <param name="frame_id" value="world"/>
+    <param name="topic" value="$(arg pcd_topic)"/>
+    <param name="rate" value="1.0"/>
+    <param name="voxel_leaf_size" value="$(arg voxel_leaf_size)"/>
+    <param name="T_world_cloud/translation" type="yaml"
+           value="[$(arg twc_tx), $(arg twc_ty), $(arg twc_tz)]"/>
+    <param name="T_world_cloud/rpy" type="yaml"
+           value="[$(arg twc_roll), $(arg twc_pitch), $(arg twc_yaw)]"/>
+  </node>
+</launch>
