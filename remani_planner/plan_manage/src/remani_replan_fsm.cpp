@@ -398,11 +398,11 @@ namespace remani_planner
       /*** FSM ***/
       if (exec_state_ != WAIT_TARGET)
       {
-        while (exec_state_ != EXEC_TRAJ)
-        {
-          ros::spinOnce();
-          ros::Duration(0.001).sleep();
-        }
+        // Do not block inside the goal callback waiting for EXEC_TRAJ.  The
+        // callback runs on the ROS spinner thread; blocking here can prevent
+        // the FSM timer from advancing and leaves a received goal without a
+        // planning attempt.  A new goal preempts the current state and is
+        // consumed by the normal FSM loop immediately.
         changeFSMExecState(GEN_NEW_TRAJ, "TRIG");
       }
 

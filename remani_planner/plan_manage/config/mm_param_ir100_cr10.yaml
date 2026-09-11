@@ -1,6 +1,7 @@
 mm:
   collision_model_source: urdf_mesh
   collision_mesh_sample_resolution: 0.08
+  collision_diagnostics: false
   collision_mesh_use_volume: false
   mobile_base_dof            : 2
   mobile_base_length         : 0.70

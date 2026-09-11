@@ -7,6 +7,14 @@ namespace remani_planner
 {
 
 namespace {
+struct CollisionCounters {
+  uint64_t checkcollision = 0;
+  uint64_t checkManicollision = 0;
+  uint64_t checkCarManiCollision = 0;
+  uint64_t checkManiManiCollision = 0;
+};
+CollisionCounters collision_counters;
+
 struct ScopedCollisionTiming {
   const char *name; ros::WallTime start;
   explicit ScopedCollisionTiming(const char *n) : name(n), start(ros::WallTime::now()) {}
@@ -30,6 +38,8 @@ void MMConfig::setParam(ros::NodeHandle &nh){
         std::string description, error;
         double resolution = 0.03;
         nh.param("mm/collision_mesh_sample_resolution", resolution, 0.03);
+        collision_mesh_contact_tolerance_ = 1.5 * resolution;
+        nh.param("mm/collision_diagnostics", collision_diagnostics_, false);
         if (!nh.getParam("/robot_description", description))
             ROS_ERROR("collision_model_source=urdf_mesh but /robot_description is missing");
         else {
@@ -110,6 +120,10 @@ void MMConfig::setParam(ros::NodeHandle &nh){
     T_q_0_(0, 3) = base_mani_fixed_joint_xyz_ypr[0];
     T_q_0_(1, 3) = base_mani_fixed_joint_xyz_ypr[1];
     T_q_0_(2, 3) = base_mani_fixed_joint_xyz_ypr[2];
+    ROS_INFO("[CollisionModel] T_q_0 translation=[%.4f %.4f %.4f] rpy_xyz=[%.4f %.4f %.4f] source=%s",
+             T_q_0_(0, 3), T_q_0_(1, 3), T_q_0_(2, 3),
+             base_mani_fixed_joint_xyz_ypr[3], base_mani_fixed_joint_xyz_ypr[4],
+             base_mani_fixed_joint_xyz_ypr[5], use_urdf_collision_mesh_ ? "urdf" : "legacy");
 
     nh.param("mm/use_fast_armer", useFastArmer_, true);
 
@@ -809,11 +823,12 @@ bool MMConfig::checkManiObsCollision(Eigen::Vector3d car_state, Eigen::VectorXd 
 
 bool MMConfig::checkCarManiCollision(Eigen::VectorXd mani_state, bool safe, double &min_dist){
     ScopedCollisionTiming timing("mm_config::checkCarManiCollision");
+    ++collision_counters.checkCarManiCollision;
     // Mesh samples already represent the physical thickness of both bodies.
     // Do not add the legacy sphere radii on top of them, or valid clearances
     // near the arm mounting area are reported as collisions.
     double safe_dist = (use_urdf_collision_mesh_ && urdf_collision_model_)
-        ? (safe ? self_safe_margin_ : 0.0)
+        ? (safe ? self_safe_margin_ : collision_mesh_contact_tolerance_)
         : (safe ? mobile_base_check_radius_ + manipulator_thickness_ + self_safe_margin_
                 : mobile_base_check_radius_ + manipulator_thickness_);
     std::vector<Eigen::Vector3d> car_pts;
@@ -857,28 +872,61 @@ bool MMConfig::checkCarManiCollision(Eigen::VectorXd mani_state, bool safe, doub
                 car_max(axis) < link_min(axis) - safe_dist)
                 return false;
         }
+        size_t link_point_index = 0;
         for (const auto &local : samples) {
             pt_on_link = (T * Eigen::Vector4d(local.x(), local.y(), local.z(), 1.0)).head(3);
+            size_t base_point_index = 0;
             for (const auto &base_pt : car_pts) {
                 if ((pt_on_link - base_pt).norm() < safe_dist) {
                     min_dist = (pt_on_link - base_pt).norm();
+                    if (collision_diagnostics_) {
+                        const double c = std::cos(diagnostic_car_state_(2));
+                        const double s = std::sin(diagnostic_car_state_(2));
+                        auto to_world = [&](const Eigen::Vector3d &p) {
+                            return Eigen::Vector3d(c * p.x() - s * p.y() + diagnostic_car_state_(0),
+                                                   s * p.x() + c * p.y() + diagnostic_car_state_(1), p.z());
+                        };
+                        ROS_WARN_STREAM("[CollisionDiag] type=2 car_state=["
+                                        << diagnostic_car_state_.transpose() << "] q=["
+                                        << mani_state.transpose() << "] link=" << name
+                                        << " link_point=" << link_point_index
+                                        << " car_point=" << base_point_index
+                                        << " arm_world=" << to_world(pt_on_link).transpose()
+                                        << " car_world=" << to_world(base_pt).transpose()
+                                        << " distance=" << min_dist << " threshold=" << safe_dist
+                                        << " safe=" << safe);
+                    }
                     return true;
                 }
+                ++base_point_index;
             }
+            ++link_point_index;
         }
         return false;
     };
-    if (use_urdf_collision_mesh_) {
-        // Link1 is the directly mounted base-adjacent link.  Its collision
-        // geometry intentionally overlaps the mounting platform; checking
-        // it against the mobile base would flag every valid start state.
-        T_now = T_now * T_joint[0];
-        for (int i = 1; i < manipulator_dof_; ++i) {
-            T_now = T_now * T_joint[i];
-            if (check_arm_link("Link" + std::to_string(i + 1), T_now)) return true;
+    if (use_urdf_collision_mesh_ && urdf_collision_model_ && urdf_fk_ready_) {
+        // The URDF collision meshes must be transformed by the same FK chain
+        // used by robot_state_publisher/RViz.  Applying the legacy
+        // T_q_0_ * T_joint chain here is incorrect for the IR100 model:
+        // arm_world_joint and arm_base_joint are already part of the URDF
+        // chain, and would otherwise produce a different mounting transform.
+        std::vector<Eigen::Matrix4d> urdf_transforms;
+        if (getUrdfLinkTransforms(mani_state, urdf_transforms) &&
+            urdf_transforms.size() >= static_cast<size_t>(manipulator_dof_ + 1)) {
+            // urdf_transforms[0] is arm_base_link, which represents the fixed
+            // mounting interface.  Exclude only that interface; Link1 is a
+            // real arm collision body and must be checked against the chassis.
+            for (int i = 0; i < manipulator_dof_; ++i) {
+                if (check_arm_link("Link" + std::to_string(i + 1),
+                                   urdf_transforms[static_cast<size_t>(i + 1)]))
+                    return true;
+            }
+            min_dist = safe_dist;
+            return false;
         }
-        min_dist = safe_dist;
-        return false;
+        ROS_WARN_THROTTLE(1.0, "[Collision] URDF FK unavailable for car-arm check; refusing legacy mixed-frame check");
+        min_dist = 0.0;
+        return true;
     }
     T_now = T_q_0_ * T_joint[0];
     for(int i = 1; i < manipulator_dof_; ++i){
@@ -900,6 +948,7 @@ bool MMConfig::checkCarManiCollision(Eigen::VectorXd mani_state, bool safe, doub
 
 bool MMConfig::checkManiManiCollision(Eigen::VectorXd mani_state, bool safe, double &min_dist){
     ScopedCollisionTiming timing("mm_config::checkManiManiCollision");
+    ++collision_counters.checkManiManiCollision;
     if (use_urdf_collision_mesh_ && urdf_collision_model_ &&
         mani_state.size() == manipulator_dof_) {
         std::vector<Eigen::Matrix4d> link_tf;
@@ -930,7 +979,9 @@ bool MMConfig::checkManiManiCollision(Eigen::VectorXd mani_state, bool safe, dou
                                 // link thickness.  Do not add the legacy
                                 // thickness again; only retain a tiny sample
                                 // discretization tolerance.
-                                const double exact_limit = safe ? self_safe_margin_ : 0.0;
+                                const double exact_limit = safe
+                                    ? self_safe_margin_
+                                    : collision_mesh_contact_tolerance_;
                                 const size_t step_a = std::max<size_t>(1, sa.size() / 120);
                                 const size_t step_b = std::max<size_t>(1, sb.size() / 120);
                                 for (size_t ia = 0; ia < sa.size(); ia += step_a) {
@@ -993,6 +1044,7 @@ bool MMConfig::checkManiManiCollision(Eigen::VectorXd mani_state, bool safe, dou
 
 bool MMConfig::checkManicollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_state, bool safe){
     ScopedCollisionTiming timing("mm_config::checkManicollision");
+    ++collision_counters.checkManicollision;
     double min_dist;
     if(checkManiObsCollision(car_state, mani_state, safe, min_dist)){
         return true;
@@ -1008,13 +1060,19 @@ bool MMConfig::checkManicollision(Eigen::Vector3d car_state, Eigen::VectorXd man
 
 bool MMConfig::checkcollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_state, bool safe, int &coll_type /*0: car, 1: mani, 2: car-mani, 3: mani-mani*/){
     ScopedCollisionTiming timing("mm_config::checkcollision");
+    ++collision_counters.checkcollision;
+    diagnostic_car_state_ = car_state;
     double min_dist;
     if(checkCarObsCollision(car_state, true, safe, min_dist)){
         coll_type = 0;
+        ROS_WARN_STREAM("[CollisionDiag] type=0 car_state=[" << car_state.transpose()
+                        << "] q=[" << mani_state.transpose() << "] distance=" << min_dist);
         return true;
     }
     if(checkManiObsCollision(car_state, mani_state, safe, min_dist)){
         coll_type = 1;
+        ROS_WARN_STREAM("[CollisionDiag] type=1 car_state=[" << car_state.transpose()
+                        << "] q=[" << mani_state.transpose() << "] distance=" << min_dist);
         return true;
     }
     if(checkCarManiCollision(mani_state, safe, min_dist)){
@@ -1023,14 +1081,23 @@ bool MMConfig::checkcollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_st
     }
     if(checkManiManiCollision(mani_state, safe, min_dist)){
         coll_type = 3;
+        ROS_WARN_STREAM("[CollisionDiag] type=3 car_state=[" << car_state.transpose()
+                        << "] q=[" << mani_state.transpose() << "] distance=" << min_dist);
         return true;
     }
     coll_type = -1;
+    ROS_INFO_THROTTLE(5.0, "[CollisionStats] check=%llu mani=%llu car_mani=%llu mani_mani=%llu",
+                      static_cast<unsigned long long>(collision_counters.checkcollision),
+                      static_cast<unsigned long long>(collision_counters.checkManicollision),
+                      static_cast<unsigned long long>(collision_counters.checkCarManiCollision),
+                      static_cast<unsigned long long>(collision_counters.checkManiManiCollision));
     return false;
 }
 
 bool MMConfig::checkcollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_state, bool safe){
     ScopedCollisionTiming timing("mm_config::checkcollision");
+    ++collision_counters.checkcollision;
+    diagnostic_car_state_ = car_state;
     double min_dist;
     if(checkCarObsCollision(car_state, true, safe, min_dist)){
         return true;

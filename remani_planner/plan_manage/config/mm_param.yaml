@@ -1,4 +1,5 @@
 mm:
+  collision_diagnostics: false
   mobile_base_dof            : 2    # degree of freedom of the mobile base
   mobile_base_length         : 0.5  # length of the mobile base
   mobile_base_width          : 0.5  # width of the mobile base

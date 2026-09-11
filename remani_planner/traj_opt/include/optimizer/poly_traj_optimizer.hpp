@@ -85,6 +85,8 @@ namespace remani_planner
     Eigen::VectorXi times_coll_other_;
     bool obs_viol_, car_fea_viol_, mani_fea_viol_;
     Eigen::Matrix4d T_q_0_;
+    size_t mm_obstacle_gradient_calls_{0};
+    size_t mm_final_safety_checks_{0};
 
     int cps_num_prePiece_; // number of distinctive constrain points each piece
     int variable_num_;     // optimization variables

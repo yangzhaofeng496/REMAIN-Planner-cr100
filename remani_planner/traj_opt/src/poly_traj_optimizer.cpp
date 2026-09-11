@@ -432,6 +432,7 @@ namespace remani_planner
   }
 
   bool PolyTrajOptimizer::IsTrajSafe(const SingulTrajData &traj_data){
+    mm_final_safety_checks_ = 0;
     double dt = 0.01;
     double T_all = traj_data.duration;
     int i_end = floor(T_all / dt); // check all
@@ -439,6 +440,7 @@ namespace remani_planner
     // double t = 0.00;  //do not skip the start point
     int coll_type;
     for (int i = 5; i < i_end; i++){
+      ++mm_final_safety_checks_;
       if(checkCollision(traj_data, t, coll_type)){
         if(coll_type == 0){
           ROS_WARN("car collision at time %f!", t);
@@ -459,6 +461,7 @@ namespace remani_planner
       
       t += dt;
     }
+    ROS_INFO("[CollisionStats] IsTrajSafe checks=%zu result=true", mm_final_safety_checks_);
     return true;
   }
 
@@ -876,6 +879,7 @@ namespace remani_planner
                                             double &costp,
                                             double &costp_mani,
                                             double &costp_self){
+    ++mm_obstacle_gradient_calls_;
     // if (i_dp == 0 || i_dp >= cps_.cp_size * 2 / 3)
     //   return false;
     bool ret = false;
@@ -913,6 +917,7 @@ namespace remani_planner
       }
     }
 
+    if (!mm_config_->usesUrdfCollisionMesh()) {
     double dist;
     double dist_err;
     double dist_err_2, dist_err_3;
@@ -1031,6 +1036,10 @@ namespace remani_planner
       }
     }
 
+    // Legacy point-model car/arm and arm/arm gradients are only valid when
+    // the planner is using the legacy collision model.  In URDF mode they
+    // disagree with MMConfig::checkcollision() (and with IsTrajSafe()), so
+    // never mix the two geometry pipelines in one optimization pass.
     // check mani link with robot
     T_now = T_q_0_ * T_joint[0];
     T_grad_list_self[0] = T_q_0_ * T_joint_grad[0];
@@ -1104,6 +1113,8 @@ namespace remani_planner
       }
     }
 
+    }
+    ROS_DEBUG("[CollisionStats] obstacleGradCostforMM calls=%zu", mm_obstacle_gradient_calls_);
     return ret;
   }
 

@@ -121,6 +121,11 @@ namespace remani_planner
         std::vector<Eigen::Matrix4Xd> manipulator_link_pts_;
         std::shared_ptr<UrdfCollisionModel> urdf_collision_model_;
         bool use_urdf_collision_mesh_{false};
+        bool collision_diagnostics_{false};
+        // Geometric tolerance induced by discretising URDF collision meshes.
+        // This is not a safety margin; it prevents intersecting surfaces from
+        // being missed merely because no two sampled points coincide.
+        double collision_mesh_contact_tolerance_{0.0};
         KDL::Chain urdf_chain_;
         std::unique_ptr<KDL::ChainFkSolverPos_recursive> urdf_fk_solver_;
         bool urdf_fk_ready_{false};
@@ -132,6 +137,7 @@ namespace remani_planner
 
         Eigen::Matrix2d B_h_;
         Eigen::Matrix4d T_q_0_;
+        Eigen::Vector3d diagnostic_car_state_{Eigen::Vector3d::Zero()};
         int vis_idx_size_;
 
         Eigen::VectorXd manipulator_min_pos_, manipulator_max_pos_;
