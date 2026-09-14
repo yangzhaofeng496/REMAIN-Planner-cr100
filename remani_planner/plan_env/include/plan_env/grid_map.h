@@ -94,6 +94,10 @@ struct MappingParameters
   double local_bound_inflate_;
 
   bool use_global_map_;
+  // When true, every incoming global-map cloud rebuilds the world map instead
+  // of only the first one.  Needed for interactive global-map authoring (e.g.
+  // re-placing a static PCD via RViz 2D Pose Estimate).
+  bool global_map_refresh_ = false;
 };
 
 // intermediate mapping data for fusion

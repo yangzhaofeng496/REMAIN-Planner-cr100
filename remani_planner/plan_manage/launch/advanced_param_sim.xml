@@ -30,6 +30,7 @@
 	<arg name="profile_max_oneshot_calls" default="0"/>
 	<arg name="profile_oneshot_stride" default="1"/>
 	<arg name="profile_oneshot_max_jump_layers" default="0"/>
+	<arg name="global_map_refresh" default="false"/>
 
 	<arg name="cx"/>
 	<arg name="cy"/>
@@ -95,6 +96,7 @@
 		<!-- depth filter -->
 		<param name="grid_map/use_depth_filter"       value="true"/>
 		<param name="grid_map/use_global_map"         value="true"/>
+		<param name="grid_map/global_map_refresh"     value="$(arg global_map_refresh)"/>
 		<param name="grid_map/depth_filter_tolerance" value="0.15"/>
 		<param name="grid_map/depth_filter_maxdist"   value="5.0"/>
 		<param name="grid_map/depth_filter_mindist"   value="0.2"/>

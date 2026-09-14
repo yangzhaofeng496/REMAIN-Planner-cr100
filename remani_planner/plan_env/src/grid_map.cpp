@@ -58,6 +58,7 @@ void GridMap::initMap(ros::NodeHandle &nh)
   node_.param("grid_map/local_bound_inflate", mp_.local_bound_inflate_, 1.0);
 
   node_.param("grid_map/use_global_map", mp_.use_global_map_, false);
+  node_.param("grid_map/global_map_refresh", mp_.global_map_refresh_, false);
   bool global_plan;
   node_.param("fsm/global_plan", global_plan, false);
   if(global_plan){
@@ -887,7 +888,7 @@ void GridMap::odomCallback(const nav_msgs::OdometryConstPtr &odom)
 
 void GridMap::cloudCallback(const sensor_msgs::PointCloud2ConstPtr &img)
 {
-  if(md_.has_cloud_ && mp_.use_global_map_){
+  if(md_.has_cloud_ && mp_.use_global_map_ && !mp_.global_map_refresh_){
     // std::cout << "ret" << std::endl;
     return;
   }

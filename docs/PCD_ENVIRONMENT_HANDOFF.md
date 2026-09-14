@@ -75,6 +75,16 @@ frame_id       = world
 
 `exp0_ir100_cr10_pcd.launch` 默认使用一组使机车落入 `20 x 8 x 3` 地图的变换（`tx=-7.9, ty=7.05, tz=0.5`），把机车放到机器人前方约 3 米处；请按真实安装调整。
 
+### 交互式摆放（2D Pose Estimate）
+
+在 `exp0_ir100_cr10_pcd.launch` 中启用交互摆放：
+
+- 发布器订阅 `~pose_topic`（默认 `/initialpose`，即 RViz 的 **2D Pose Estimate**）；
+- 收到位姿后，把车体包围盒中心（XY）和底面（Z）对齐到该位姿，车体朝向取该位姿的 yaw；
+- `grid_map/global_map_refresh=true` 使 `GridMap::cloudCallback` 在每次收到新的全局点云时重建世界地图（否则只处理第一条）。
+
+因此在 RViz 里拖动 **2D Pose Estimate**，车体点云会立即移动，规划器随之更新。位姿落在地图范围外时该区域没有障碍物。
+
 ## 4. 关键文件
 
 ### 启动文件
@@ -95,6 +105,7 @@ remani_planner/plan_manage/scripts/static_pcd_publisher.py
 - 检查 `x/y/z` 字段；
 - 可选体素降采样 `~voxel_leaf_size`（默认 `0.0`，即关闭；按占用体素取质心）；
 - 可选刚体变换 `~T_world_cloud`（默认单位变换）；
+- 可选交互摆放 `~pose_topic`（默认 `/initialpose`；置空字符串可关闭）；
 - 发布 `sensor_msgs/PointCloud2`；
 - 默认发布到 `/map_generator/global_cloud`；
 - 默认坐标系为 `world`；
@@ -220,10 +231,14 @@ rostopic echo -n 1 /map_generator/global_cloud/header
 - Shell 语法检查通过；
 - `git diff --check` 通过；
 - `roslaunch --nodes remani_planner exp0_ir100_cr10_pcd.launch` 能解析出静态点云发布器和规划节点；
-- `roslaunch --dump-params` 确认 `voxel_leaf_size` 与 `T_world_cloud` 参数正确解析。
+- `roslaunch --dump-params` 确认 `voxel_leaf_size`、`T_world_cloud`、`pose_topic`
+  与 `grid_map/global_map_refresh` 参数正确解析；
+- `catkin_make -DCMAKE_BUILD_TYPE=Release -j2` 编译通过；
+- 端到端验证：`/map_generator/global_cloud` 宽度 270,236（3 cm 降采样），
+  `grid_map/occupancy_inflate` 包围盒与默认车体位置一致；
+- 交互验证：发布 `/initialpose` 位姿 `(4,0,yaw=0)` 后，`occupancy_inflate`
+  包围盒移动到 `x[2.28,5.72] y[-3.38,3.38]`（车体位置 + 0.15 m 膨胀）。
 
-待完成（需要重启规划器后验证）：
+待完成：
 
-- 用 `/map_generator/global_cloud` 路由后，确认 `grid_map/occupancy_inflate`
-  的包围盒与变换后的机车点云一致；
 - 端到端发送 2D Nav Goal，确认规划器绕开机车点云。

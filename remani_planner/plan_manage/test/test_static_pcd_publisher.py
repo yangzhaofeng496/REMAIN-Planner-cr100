@@ -51,6 +51,31 @@ class StaticPcdPublisherTest(unittest.TestCase):
         self.assertAlmostEqual(result[0][1], 1.0, places=6)
         self.assertAlmostEqual(result[0][2], 0.0, places=6)
 
+    def test_quaternion_to_yaw_identity_and_quarter_turn(self):
+        self.assertAlmostEqual(module.quaternion_to_yaw(0.0, 0.0, 0.0, 1.0), 0.0)
+        half = 0.7071067811865476
+        self.assertAlmostEqual(module.quaternion_to_yaw(0.0, 0.0, half, half),
+                               3.141592653589793 / 2.0, places=6)
+
+    def test_placement_anchor_uses_xy_center_and_floor(self):
+        points = [(-1.0, -2.0, 0.5), (3.0, 4.0, 1.5)]
+        self.assertEqual(module.placement_anchor(points), (1.0, 1.0, 0.5))
+
+    def test_place_points_translates_anchor_to_position(self):
+        points = [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0)]
+        anchor = module.placement_anchor(points)
+        placed = module.place_points(points, anchor, (5.0, -1.0, 2.0), 0.0)
+        self.assertEqual(placed, [(4.0, -1.0, 2.0), (6.0, -1.0, 2.0)])
+
+    def test_place_points_applies_yaw(self):
+        points = [(-1.0, 0.0, 0.0), (1.0, 0.0, 0.0)]
+        anchor = module.placement_anchor(points)
+        placed = module.place_points(points, anchor, (0.0, 0.0, 0.0),
+                                     3.141592653589793 / 2.0)
+        self.assertAlmostEqual(placed[0][0], 0.0, places=6)
+        self.assertAlmostEqual(placed[0][1], -1.0, places=6)
+        self.assertAlmostEqual(placed[1][1], 1.0, places=6)
+
     def test_vector_param_rejects_wrong_length(self):
         class FakeRospy(object):
             @staticmethod

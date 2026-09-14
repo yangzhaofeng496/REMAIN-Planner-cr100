@@ -128,38 +128,92 @@ def _vector_param(rospy, name, default):
     return tuple(float(component) for component in value)
 
 
+def quaternion_to_yaw(x, y, z, w):
+    """Yaw (rotation about world Z) of a quaternion, in radians."""
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def placement_anchor(points):
+    """Anchor used by interactive placement: cloud centre in XY, floor in Z."""
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    zs = [point[2] for point in points]
+    return (0.5 * (min(xs) + max(xs)), 0.5 * (min(ys) + max(ys)), min(zs))
+
+
+def place_points(points, anchor, position, yaw):
+    """Move the anchored cloud so its anchor lands on position with the given yaw."""
+    ax, ay, az = anchor
+    px, py, pz = position
+    c, s = math.cos(yaw), math.sin(yaw)
+    return [(c * (x - ax) - s * (y - ay) + px,
+             s * (x - ax) + c * (y - ay) + py,
+             z - az + pz) for x, y, z in points]
+
+
 def main():
+    import threading
     import rospy
     from sensor_msgs.msg import PointCloud2, PointField
 
     rospy.init_node("static_pcd_publisher")
     path = rospy.get_param("~pcd_file")
     frame = rospy.get_param("~frame_id", DEFAULT_FRAME)
-    topic = rospy.get_param("~topic", "/pcl_render_node/cloud")
+    topic = rospy.get_param("~topic", "/map_generator/global_cloud")
     rate_hz = rospy.get_param("~rate", 1.0)
     leaf_size = float(rospy.get_param("~voxel_leaf_size", 0.0))
+    pose_topic = rospy.get_param("~pose_topic", "/initialpose")
     translation = _vector_param(rospy, "~T_world_cloud/translation", [0.0, 0.0, 0.0])
     rpy = _vector_param(rospy, "~T_world_cloud/rpy", [0.0, 0.0, 0.0])
+
     points = load_xyz_points(path)
     raw_count = len(points)
     points = voxel_downsample(points, leaf_size)
     points = apply_transform(points, translation, rpy)
+    anchor = placement_anchor(points)
+
     fields = [PointField("x", 0, PointField.FLOAT32, 1),
               PointField("y", 4, PointField.FLOAT32, 1),
               PointField("z", 8, PointField.FLOAT32, 1)]
-    payload = b"".join(struct.pack("<fff", *point) for point in points)
     publisher = rospy.Publisher(topic, PointCloud2, queue_size=1, latch=True)
-    message = PointCloud2(height=1, width=len(points), fields=fields,
-                          is_bigendian=False, point_step=12,
-                          row_step=12 * len(points), data=payload,
-                          is_dense=True)
-    message.header.frame_id = frame
-    rospy.loginfo("Loaded %d points from %s; voxel_leaf_size=%.3f kept %d points; "
-                  "T_world_cloud translation=%s rpy=%s; publishing %s in frame %s",
-                  raw_count, path, leaf_size, len(points), translation, rpy, topic, frame)
-    while not rospy.is_shutdown():
+    lock = threading.Lock()
+    state = {"points": points}
+
+    def publish_points(current):
+        payload = b"".join(struct.pack("<fff", *point) for point in current)
+        message = PointCloud2(height=1, width=len(current), fields=fields,
+                              is_bigendian=False, point_step=12,
+                              row_step=12 * len(current), data=payload,
+                              is_dense=True)
+        message.header.frame_id = frame
         message.header.stamp = rospy.Time.now()
         publisher.publish(message)
+
+    def on_pose(msg):
+        pose = msg.pose.pose
+        yaw = quaternion_to_yaw(pose.orientation.x, pose.orientation.y,
+                                pose.orientation.z, pose.orientation.w)
+        placed = place_points(points, anchor, (pose.position.x, pose.position.y,
+                                                pose.position.z), yaw)
+        with lock:
+            state["points"] = placed
+        publish_points(placed)
+        rospy.loginfo("Re-placed cloud at [%.2f %.2f %.2f] yaw=%.2f",
+                      pose.position.x, pose.position.y, pose.position.z, yaw)
+
+    if pose_topic:
+        from geometry_msgs.msg import PoseWithCovarianceStamped
+        rospy.Subscriber(pose_topic, PoseWithCovarianceStamped, on_pose)
+
+    rospy.loginfo("Loaded %d points from %s; voxel_leaf_size=%.3f kept %d points; "
+                  "T_world_cloud translation=%s rpy=%s anchor=%s; publishing %s in frame %s; "
+                  "interactive pose topic %s",
+                  raw_count, path, leaf_size, len(points), translation, rpy, anchor,
+                  topic, frame, pose_topic or "<disabled>")
+    while not rospy.is_shutdown():
+        with lock:
+            current = state["points"]
+        publish_points(current)
         rospy.sleep(1.0 / max(rate_hz, 0.01))
 
 
