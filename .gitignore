@@ -23,6 +23,7 @@ attachment/*.gif
 debug_transform.py
 TCP-IP-ROS-6AXis.zip
 TCP-IP-ROS-6AXis/.git-inner-backup/
+pcd_initial_pose.env
 
 # Local-only test and verification helpers
 tests/

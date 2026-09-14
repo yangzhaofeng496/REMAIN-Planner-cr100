@@ -16,6 +16,9 @@
   <arg name="twc_yaw" default="0.0"/>
   <!-- RViz 2D Pose Estimate topic; set to "" to disable interactive placement. -->
   <arg name="pose_topic" default="/initialpose"/>
+  <!-- Startup placement [x, y, z, yaw]; [] keeps T_world_cloud.  Saved by
+       save_pcd_pose.sh and replayed by run_pcd_demo.sh. -->
+  <arg name="initial_pose" default="[]"/>
 
   <!-- Reuse the complete IR100+CR10 simulator/planner/RViz launch, but do
        not start the synthetic test-bar map.  global_map_refresh lets every
@@ -35,6 +38,7 @@
     <param name="topic" value="$(arg pcd_topic)"/>
     <param name="rate" value="1.0"/>
     <param name="pose_topic" value="$(arg pose_topic)"/>
+    <param name="initial_pose" type="yaml" value="$(arg initial_pose)"/>
     <param name="voxel_leaf_size" value="$(arg voxel_leaf_size)"/>
     <param name="T_world_cloud/translation" type="yaml"
            value="[$(arg twc_tx), $(arg twc_ty), $(arg twc_tz)]"/>

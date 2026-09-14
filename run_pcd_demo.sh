@@ -31,10 +31,27 @@ if [[ "${REMANI_KILL_OLD:-0}" == "1" ]]; then
   docker rm -f remani_pcd_demo >/dev/null 2>&1 || true
 fi
 
+# Replay the last saved interactive placement, if any.
+INITIAL_ARGS=()
+POSE_ENV="${REPO_ROOT}/pcd_initial_pose.env"
+if [[ -f "${POSE_ENV}" ]]; then
+  # shellcheck disable=SC1090
+  source "${POSE_ENV}"
+  if [[ -n "${REMANI_INITIAL_POSE:-}" ]]; then
+    read -r -a pose <<< "${REMANI_INITIAL_POSE}"
+    if [[ ${#pose[@]} -eq 4 ]]; then
+      INITIAL_ARGS=("initial_pose:='[${pose[0]},${pose[1]},${pose[2]},${pose[3]}]'")
+      echo "[run_pcd_demo] initial pose  : ${REMANI_INITIAL_POSE}"
+    else
+      echo "[run_pcd_demo] ignoring malformed ${POSE_ENV}: ${REMANI_INITIAL_POSE}" >&2
+    fi
+  fi
+fi
+
 echo "[run_pcd_demo] container PCD  : ${REMANI_PCD_FILE:-<default 1 cm PCD>}"
 echo "[run_pcd_demo] voxel leaf     : ${REMANI_VOXEL_LEAF_SIZE} m"
 echo "[run_pcd_demo] DISPLAY        : ${DISPLAY}"
 echo "[run_pcd_demo] routing topic  : /map_generator/global_cloud"
 echo "[run_pcd_demo] starting ..."
 
-exec "${REPO_ROOT}/docker/run_ir100_cr10_pcd.sh" "$@"
+exec "${REPO_ROOT}/docker/run_ir100_cr10_pcd.sh" "${INITIAL_ARGS[@]}" "$@"

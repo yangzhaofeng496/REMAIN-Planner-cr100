@@ -10,6 +10,7 @@
   <arg name="topic" default="/map_generator/global_cloud"/>
   <arg name="voxel_leaf_size" default="0.0"/>
   <arg name="pose_topic" default="/initialpose"/>
+  <arg name="initial_pose" default="[]"/>
   <arg name="twc_tx" default="0.0"/>
   <arg name="twc_ty" default="0.0"/>
   <arg name="twc_tz" default="0.0"/>
@@ -24,6 +25,7 @@
     <param name="rate" value="1.0"/>
     <param name="voxel_leaf_size" value="$(arg voxel_leaf_size)"/>
     <param name="pose_topic" value="$(arg pose_topic)"/>
+    <param name="initial_pose" type="yaml" value="$(arg initial_pose)"/>
     <param name="T_world_cloud/translation" type="yaml"
            value="[$(arg twc_tx), $(arg twc_ty), $(arg twc_tz)]"/>
     <param name="T_world_cloud/rpy" type="yaml"

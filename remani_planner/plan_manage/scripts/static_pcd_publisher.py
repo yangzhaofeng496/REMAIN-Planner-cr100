@@ -172,12 +172,32 @@ def main():
     points = apply_transform(points, translation, rpy)
     anchor = placement_anchor(points)
 
+    initial_pose = rospy.get_param("~initial_pose", [])
+    if len(initial_pose) == 4:
+        initial_position = tuple(float(v) for v in initial_pose[:3])
+        initial_yaw = float(initial_pose[3])
+        points = place_points(points, anchor, initial_position, initial_yaw)
+    else:
+        initial_position = anchor
+        initial_yaw = rpy[2]
+
     fields = [PointField("x", 0, PointField.FLOAT32, 1),
               PointField("y", 4, PointField.FLOAT32, 1),
               PointField("z", 8, PointField.FLOAT32, 1)]
     publisher = rospy.Publisher(topic, PointCloud2, queue_size=1, latch=True)
+    from geometry_msgs.msg import PoseStamped
+    pose_publisher = rospy.Publisher("~current_pose", PoseStamped, queue_size=1, latch=True)
     lock = threading.Lock()
     state = {"points": points}
+
+    def publish_pose(position, yaw):
+        message = PoseStamped()
+        message.header.frame_id = frame
+        message.header.stamp = rospy.Time.now()
+        message.pose.position.x, message.pose.position.y, message.pose.position.z = position
+        message.pose.orientation.z = math.sin(0.5 * yaw)
+        message.pose.orientation.w = math.cos(0.5 * yaw)
+        pose_publisher.publish(message)
 
     def publish_points(current):
         payload = b"".join(struct.pack("<fff", *point) for point in current)
@@ -193,23 +213,26 @@ def main():
         pose = msg.pose.pose
         yaw = quaternion_to_yaw(pose.orientation.x, pose.orientation.y,
                                 pose.orientation.z, pose.orientation.w)
-        placed = place_points(points, anchor, (pose.position.x, pose.position.y,
-                                                pose.position.z), yaw)
+        position = (pose.position.x, pose.position.y, pose.position.z)
+        placed = place_points(points, anchor, position, yaw)
         with lock:
             state["points"] = placed
         publish_points(placed)
+        publish_pose(position, yaw)
         rospy.loginfo("Re-placed cloud at [%.2f %.2f %.2f] yaw=%.2f",
-                      pose.position.x, pose.position.y, pose.position.z, yaw)
+                      position[0], position[1], position[2], yaw)
 
     if pose_topic:
         from geometry_msgs.msg import PoseWithCovarianceStamped
         rospy.Subscriber(pose_topic, PoseWithCovarianceStamped, on_pose)
 
+    publish_pose(initial_position, initial_yaw)
     rospy.loginfo("Loaded %d points from %s; voxel_leaf_size=%.3f kept %d points; "
-                  "T_world_cloud translation=%s rpy=%s anchor=%s; publishing %s in frame %s; "
-                  "interactive pose topic %s",
+                  "T_world_cloud translation=%s rpy=%s anchor=%s initial_pose=%s; "
+                  "publishing %s in frame %s; interactive pose topic %s",
                   raw_count, path, leaf_size, len(points), translation, rpy, anchor,
-                  topic, frame, pose_topic or "<disabled>")
+                  list(initial_position) + [initial_yaw], topic, frame,
+                  pose_topic or "<disabled>")
     while not rospy.is_shutdown():
         with lock:
             current = state["points"]

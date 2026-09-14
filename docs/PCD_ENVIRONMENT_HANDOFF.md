@@ -85,6 +85,23 @@ frame_id       = world
 
 因此在 RViz 里拖动 **2D Pose Estimate**，车体点云会立即移动，规划器随之更新。位姿落在地图范围外时该区域没有障碍物。
 
+### 保存当前位姿为初始位姿
+
+发布器把当前摆放位姿以 latched 话题 `/static_pcd_publisher/current_pose` 输出。
+在车体摆到想要的位置后执行：
+
+```bash
+./save_pcd_pose.sh
+```
+
+会把位姿写入仓库根目录的 `pcd_initial_pose.env`（已被 `.gitignore` 忽略）。
+下次 `./run_pcd_demo.sh` 会自动读取并通过 `initial_pose:=...` 重放，车体启动即在
+该位置，无需再次拖动。也可以直接给 launch 传参覆盖：
+
+```bash
+./run_pcd_demo.sh initial_pose:='[4.0,-0.1,0.0,-1.53]'
+```
+
 ## 4. 关键文件
 
 ### 启动文件
@@ -106,6 +123,8 @@ remani_planner/plan_manage/scripts/static_pcd_publisher.py
 - 可选体素降采样 `~voxel_leaf_size`（默认 `0.0`，即关闭；按占用体素取质心）；
 - 可选刚体变换 `~T_world_cloud`（默认单位变换）；
 - 可选交互摆放 `~pose_topic`（默认 `/initialpose`；置空字符串可关闭）；
+- 可选启动位姿 `~initial_pose`（`[x, y, z, yaw]`，默认 `[]`），用于重放已保存位置；
+- latched 位姿输出 `~current_pose`（`geometry_msgs/PoseStamped`），供 `save_pcd_pose.sh` 读取；
 - 发布 `sensor_msgs/PointCloud2`；
 - 默认发布到 `/map_generator/global_cloud`；
 - 默认坐标系为 `world`；
@@ -237,7 +256,10 @@ rostopic echo -n 1 /map_generator/global_cloud/header
 - 端到端验证：`/map_generator/global_cloud` 宽度 270,236（3 cm 降采样），
   `grid_map/occupancy_inflate` 包围盒与默认车体位置一致；
 - 交互验证：发布 `/initialpose` 位姿 `(4,0,yaw=0)` 后，`occupancy_inflate`
-  包围盒移动到 `x[2.28,5.72] y[-3.38,3.38]`（车体位置 + 0.15 m 膨胀）。
+  包围盒移动到 `x[2.28,5.72] y[-3.38,3.38]`（车体位置 + 0.15 m 膨胀）；
+- 保存/重放验证：`save_pcd_pose.sh` 保存 `[3.9905, -0.1110, 0.0, -1.5329]` 后，
+  重启 `run_pcd_demo.sh` 自动重放，`current_pose` 与保存值一致，`occupancy_inflate`
+  包围盒 `x[0.52,7.38] y[-1.92,1.67]` 与预期一致。
 
 待完成：
 
