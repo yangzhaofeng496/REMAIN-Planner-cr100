@@ -1,7 +1,11 @@
 mm:
   collision_model_source: urdf_mesh
-  collision_mesh_sample_resolution: 0.08
+  collision_mesh_sample_resolution: 0.03
   collision_diagnostics: false
+  # Require the column above the chassis centre up to 0.9 m (the rigid
+  # manipulator base) to be free, so the base A* only uses passages the arm
+  # mount can actually fit through.
+  base_min_clearance_z: 1.1
   collision_mesh_use_volume: false
   mobile_base_dof            : 2
   mobile_base_length         : 0.70
@@ -12,7 +16,7 @@ mm:
   mobile_base_non_singul_vel : 0.05
   mobile_base_max_wheel_omega: 10.0
   mobile_base_max_wheel_alpha: 20.0
-  mobile_base_check_radius   : 0.18
+  mobile_base_check_radius   : 0.15
 
   manipulator_dof    : 6
   manipulator_max_vel: 1.57

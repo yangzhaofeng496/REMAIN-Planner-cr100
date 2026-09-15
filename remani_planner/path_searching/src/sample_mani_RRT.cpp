@@ -759,6 +759,8 @@ struct ScopedSampleTiming {
     node->state = s;
     
     ++collision_check_calls_;
+    // Use the safety margin here so the minimum-snap seed produced from this
+    // path keeps enough clearance after re-timing/reshaping.
     if(mm_config_->checkManicollision(car_state_list_[node->index], node->state, false))
     {
       node->node_state = ManiPathNode::NODE_STATE::COLLISION;

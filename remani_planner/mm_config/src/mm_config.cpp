@@ -2,6 +2,7 @@
 #include <kdl_parser/kdl_parser.hpp>
 #include <urdf/model.h>
 #include <limits>
+#include <random>
 
 namespace remani_planner
 {
@@ -38,8 +39,13 @@ void MMConfig::setParam(ros::NodeHandle &nh){
         std::string description, error;
         double resolution = 0.03;
         nh.param("mm/collision_mesh_sample_resolution", resolution, 0.03);
-        collision_mesh_contact_tolerance_ = 1.5 * resolution;
+        // The tolerance only compensates for discretising the collision mesh;
+        // one sample spacing is sufficient.  The previous 1.5x margin rejected
+        // the tight but valid route past the locomotive once the minimum-snap
+        // seed re-timed it.
+        collision_mesh_contact_tolerance_ = 1.0 * resolution;
         nh.param("mm/collision_diagnostics", collision_diagnostics_, false);
+        nh.param("mm/base_min_clearance_z", base_min_clearance_z_, 0.0);
         if (!nh.getParam("/robot_description", description))
             ROS_ERROR("collision_model_source=urdf_mesh but /robot_description is missing");
         else {
@@ -717,6 +723,20 @@ bool MMConfig::checkCarObsCollision(Eigen::Vector3d car_state, bool precise, boo
             return true;
         }
     }
+    // Only the manipulator base is rigidly attached to the chassis; the links
+    // above can fold.  Require the vertical column above the chassis centre up
+    // to the arm-base height to be free so the base A* never routes through a
+    // passage that the (fixed) arm mount cannot fit.
+    if (base_min_clearance_z_ > 1.0e-3 && grid_map_) {
+        const int steps = std::max(1, static_cast<int>(base_min_clearance_z_ / map_resolution_));
+        for (int k = 1; k <= steps; ++k) {
+            Eigen::Vector3d probe(car_state(0), car_state(1), k * map_resolution_);
+            if (grid_map_->getInflateOccupancy(probe) > 0) {
+                min_dist = 0.0;
+                return true;
+            }
+        }
+    }
     min_dist = safe_dist;
     return false;
 }
@@ -1065,14 +1085,16 @@ bool MMConfig::checkcollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_st
     double min_dist;
     if(checkCarObsCollision(car_state, true, safe, min_dist)){
         coll_type = 0;
-        ROS_WARN_STREAM("[CollisionDiag] type=0 car_state=[" << car_state.transpose()
-                        << "] q=[" << mani_state.transpose() << "] distance=" << min_dist);
+        if (collision_diagnostics_)
+            ROS_WARN_STREAM("[CollisionDiag] type=0 car_state=[" << car_state.transpose()
+                            << "] q=[" << mani_state.transpose() << "] distance=" << min_dist);
         return true;
     }
     if(checkManiObsCollision(car_state, mani_state, safe, min_dist)){
         coll_type = 1;
-        ROS_WARN_STREAM("[CollisionDiag] type=1 car_state=[" << car_state.transpose()
-                        << "] q=[" << mani_state.transpose() << "] distance=" << min_dist);
+        if (collision_diagnostics_)
+            ROS_WARN_STREAM("[CollisionDiag] type=1 car_state=[" << car_state.transpose()
+                            << "] q=[" << mani_state.transpose() << "] distance=" << min_dist);
         return true;
     }
     if(checkCarManiCollision(mani_state, safe, min_dist)){
@@ -1081,8 +1103,9 @@ bool MMConfig::checkcollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_st
     }
     if(checkManiManiCollision(mani_state, safe, min_dist)){
         coll_type = 3;
-        ROS_WARN_STREAM("[CollisionDiag] type=3 car_state=[" << car_state.transpose()
-                        << "] q=[" << mani_state.transpose() << "] distance=" << min_dist);
+        if (collision_diagnostics_)
+            ROS_WARN_STREAM("[CollisionDiag] type=3 car_state=[" << car_state.transpose()
+                            << "] q=[" << mani_state.transpose() << "] distance=" << min_dist);
         return true;
     }
     coll_type = -1;
@@ -1114,6 +1137,54 @@ bool MMConfig::checkcollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_st
     return false;
 }
 
+bool MMConfig::sampleFeasibleManiState(const Eigen::Vector3d &car_state,
+                                       Eigen::VectorXd &mani_state,
+                                       int max_tries) {
+    if (manipulator_min_pos_.size() != manipulator_dof_ ||
+        manipulator_max_pos_.size() != manipulator_dof_) {
+        return false;
+    }
+    static std::mt19937 rng(0xC0FFEEu);
+    std::uniform_real_distribution<double> uni(0.0, 1.0);
+    bool found = false;
+    double best_height = std::numeric_limits<double>::infinity();
+    for (int t = 0; t < max_tries; ++t) {
+        Eigen::VectorXd q(manipulator_dof_);
+        for (int i = 0; i < manipulator_dof_; ++i) {
+            q(i) = manipulator_min_pos_(i) +
+                   uni(rng) * (manipulator_max_pos_(i) - manipulator_min_pos_(i));
+        }
+        int coll_type = -1;
+        if (checkcollision(car_state, q, false, coll_type)) {
+            continue;
+        }
+        // Prefer the lowest feasible posture so the arm tucks under obstacles.
+        double height = 0.0;
+        std::vector<Eigen::Matrix4d> tf_links;
+        if (use_urdf_collision_mesh_ && urdf_collision_model_ &&
+            getUrdfLinkTransforms(q, tf_links)) {
+            for (size_t i = 1; i < tf_links.size(); ++i) {
+                const std::string link = "Link" + std::to_string(i);
+                for (const auto &p : urdf_collision_model_->linkSamples(link)) {
+                    height = std::max(height,
+                        (tf_links[i] * Eigen::Vector4d(p.x(), p.y(), p.z(), 1.0))(2));
+                }
+            }
+        } else {
+            height = q.cwiseAbs().sum();
+        }
+        if (!found || height < best_height) {
+            found = true;
+            best_height = height;
+            mani_state = q;
+        }
+    }
+    if (found) {
+        ROS_INFO("[FSM] sampled feasible goal arm posture, height=%.3f", best_height);
+    }
+    return found;
+}
+
 double MMConfig::urdfManiObstacleCost(const Eigen::Vector3d &car_state,
                                       const Eigen::VectorXd &mani_state,
                                       bool safe) const {
@@ -1138,6 +1209,57 @@ double MMConfig::urdfManiObstacleCost(const Eigen::Vector3d &car_state,
             const double e = clearance + sphere.radius - d;
             if (e > 0.0) cost += e * e * e;
         }
+    }
+    return cost;
+}
+
+double MMConfig::urdfManiSelfCollisionCost(const Eigen::VectorXd &mani_state,
+                                           bool safe) const {
+    if (!use_urdf_collision_mesh_ || !urdf_collision_model_ || !urdf_fk_ready_ ||
+        !urdf_fk_solver_ || mani_state.size() != manipulator_dof_)
+        return 0.0;
+    std::vector<Eigen::Matrix4d> tf;
+    if (!getUrdfLinkTransforms(mani_state, tf) || tf.size() < 7)
+        return 0.0;
+
+    static const char *names[] = {"arm_base_link", "Link1", "Link2", "Link3",
+                                  "Link4", "Link5", "Link6"};
+    // Keep a small buffer above the hard-check tolerance so the optimizer
+    // drives the links clear instead of resting exactly on the contact limit.
+    const double margin = (safe ? self_safe_margin_ : collision_mesh_contact_tolerance_);
+
+    // Use the compact per-link bounding spheres: they already carry the mesh
+    // extent plus a small discretisation margin.  This keeps the cost cheap
+    // enough to evaluate at every control point with a numerical gradient on a
+    // long coupled trajectory.
+    auto clearance_cost = [&](const std::string &na, const Eigen::Matrix4d &Ta,
+                              const std::string &nb, const Eigen::Matrix4d &Tb) {
+        double cost = 0.0;
+        for (const auto &a : urdf_collision_model_->linkSpheres(na)) {
+            const Eigen::Vector3d pa =
+                (Ta * Eigen::Vector4d(a.center.x(), a.center.y(), a.center.z(), 1.0)).head<3>();
+            for (const auto &b : urdf_collision_model_->linkSpheres(nb)) {
+                const Eigen::Vector3d pb =
+                    (Tb * Eigen::Vector4d(b.center.x(), b.center.y(), b.center.z(), 1.0)).head<3>();
+                const double e = a.radius + b.radius + margin - (pa - pb).norm();
+                if (e > 0.0) cost += e * e * e;
+            }
+        }
+        return cost;
+    };
+
+    double cost = 0.0;
+    // Arm self-collision: skip directly adjacent links and the fixed mount.
+    for (size_t i = 1; i < 7; ++i)
+        for (size_t j = i + 2; j < 7; ++j)
+            cost += clearance_cost(names[i], tf[i], names[j], tf[j]);
+
+    // Arm versus mobile base (base_link samples live in the same body frame).
+    const std::string base = "base_link";
+    if (!urdf_collision_model_->linkSamples(base).empty()) {
+        const Eigen::Matrix4d identity = Eigen::Matrix4d::Identity();
+        for (size_t i = 1; i < 7; ++i)
+            cost += clearance_cost(base, identity, names[i], tf[i]);
     }
     return cost;
 }

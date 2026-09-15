@@ -75,6 +75,12 @@ namespace remani_planner
         double urdfManiObstacleCost(const Eigen::Vector3d &car_state,
                                     const Eigen::VectorXd &mani_state,
                                     bool safe) const;
+        // Smooth URDF-mesh clearance cost for the manipulator's self-collision
+        // and its collision with the mobile base.  Provides a gradient signal
+        // so the trajectory optimizer cannot bend the arm into contact while
+        // smoothing.  Returns 0 when nothing is within the margin.
+        double urdfManiSelfCollisionCost(const Eigen::VectorXd &mani_state,
+                                         bool safe) const;
         void visMM(ros::Publisher &pub, std::string ns, int idx, double alpha, const Eigen::Vector3d &car_state, const Eigen::VectorXd &joint_state, const bool &gripper_close);
         void visMMCheckBall(ros::Publisher &pub, std::string ns, int idx, double alpha, const Eigen::Vector3d &car_state, const Eigen::VectorXd &joint_state);
         void getMMMarkerArray(visualization_msgs::MarkerArray &marker_array, std::string ns, int idx, double alpha, const Eigen::Vector3d &car_state, const Eigen::VectorXd &joint_state, const bool &gripper_close);
@@ -101,6 +107,12 @@ namespace remani_planner
         bool getUseFastArmer() const {
             return useFastArmer_;
         }
+        // Sample a collision-free manipulator posture at the given mobile-base
+        // state.  Lets a 2D navigation goal choose a folded posture instead of
+        // forcing the currently measured one.
+        bool sampleFeasibleManiState(const Eigen::Vector3d &car_state,
+                                     Eigen::VectorXd &mani_state,
+                                     int max_tries = 300);
         
     private:
         std::vector<Eigen::Vector3d> color_set_;
@@ -126,6 +138,10 @@ namespace remani_planner
         // This is not a safety margin; it prevents intersecting surfaces from
         // being missed merely because no two sampled points coincide.
         double collision_mesh_contact_tolerance_{0.0};
+        // When > 0, the base collision check also requires the vertical column
+        // above the chassis centre up to this height to be free.  Represents
+        // the rigid manipulator base; the links above it can fold.
+        double base_min_clearance_z_{0.0};
         KDL::Chain urdf_chain_;
         std::unique_ptr<KDL::ChainFkSolverPos_recursive> urdf_fk_solver_;
         bool urdf_fk_ready_{false};

@@ -606,6 +606,42 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
       flag_success = safety_ok;
     }
 
+    // Fallback: if the optimizer's smoothed trajectory is rejected by the
+    // final safety gate, execute the collision-free front-end RRT seed
+    // directly (validated here at the same 10 ms resolution).
+    if (!flag_success && !initMJO_container.empty()) {
+      const ros::WallTime seed_start = ros::WallTime::now();
+      size_t seed_checks = 0;
+      bool seed_ok = true;
+      for (unsigned int i = 0; i < initMJO_container.size() && seed_ok; ++i) {
+        const auto traj = initMJO_container[i].getTraj(singul_container[i]);
+        const double duration = traj.getTotalDuration();
+        for (double t = 0.0; t <= duration + 1.0e-9; t += 0.01) {
+          const Eigen::VectorXd state = traj.getPos(std::min(t, duration));
+          const Eigen::VectorXd velocity = traj.getVel(std::min(t, duration));
+          double yaw = (i == 0 && t < 1.0e-9) ? start_yaw : 0.0;
+          if (velocity.head(2).norm() > 1.0e-4)
+            yaw = std::atan2(velocity(1), velocity(0));
+          int collision_type = -1;
+          ++seed_checks;
+          if (mm_config_->checkcollision(Eigen::Vector3d(state(0), state(1), yaw),
+                                         state.tail(pp_.manipulator_dim_), false,
+                                         collision_type)) {
+            ROS_WARN("[Planner] front-end seed also unsafe: segment=%u t=%.3f type=%d",
+                     i, t, collision_type);
+            seed_ok = false;
+            break;
+          }
+        }
+      }
+      if (seed_ok) {
+        ploy_traj_opt_->setMinSnapOptContainer(initMJO_container);
+        flag_success = true;
+        ROS_WARN("[Planner] backend rejected; executing collision-free front-end seed (checks=%zu)", seed_checks);
+      }
+      t_opt += ros::Duration((ros::WallTime::now() - seed_start).toSec());
+    }
+
     // calculate data
     double snap_cost = 0.0, traj_dura = 0.0;
     Eigen::VectorXd traj_len(7);
@@ -829,6 +865,10 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
       const Eigen::VectorXd &start_pos, const double start_yaw, const Eigen::VectorXd &start_vel, const Eigen::VectorXd &start_acc,
       const std::vector<Eigen::VectorXd> &waypoints, const double end_yaw, const Eigen::VectorXd &end_vel, const Eigen::VectorXd &end_acc)
   {
+    // A fresh target must not inherit the front-end failure budget from a
+    // previous (failed) goal, otherwise Kino-A* is skipped forever once the
+    // threshold was reached.
+    continous_failures_count_ = 0;
     int start_singul = 1;
     poly_traj::MinSnapOpt<8> globalMJO;
     Eigen::MatrixXd headState, tailState;

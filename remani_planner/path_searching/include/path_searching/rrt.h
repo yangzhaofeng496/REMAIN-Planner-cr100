@@ -72,6 +72,9 @@ namespace remani_planner{
     bool have_path_;
     Eigen::VectorXd min_joint_pos_, max_joint_pos_;
     double max_joint_vel_, max_joint_acc_;
+    // If > 0, confine the sampled base y to this half-width around the
+    // start/end y range (forbids lateral detours).
+    double lateral_corridor_{-1.0};
     double max_vel_, max_acc_;
     double self_safe_margin_, safe_margin_mani_;
     int mobile_base_dof_, manipulator_dof_, traj_dim_;

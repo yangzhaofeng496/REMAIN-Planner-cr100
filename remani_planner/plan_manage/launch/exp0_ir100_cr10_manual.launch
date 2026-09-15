@@ -19,7 +19,13 @@
   <arg name="profile_max_oneshot_calls" default="0"/>
   <arg name="profile_oneshot_stride" default="1"/>
   <arg name="profile_oneshot_max_jump_layers" default="0"/>
+  <arg name="profile_lateral_corridor" default="0.3"/>
+  <arg name="profile_poly_piece_length" default="2.0"/>
   <arg name="global_map_refresh" default="false"/>
+  <arg name="obstacles_inflation" default="0.15"/>
+  <arg name="map_size_x" default="20.0"/>
+  <arg name="map_size_y" default="10.0"/>
+  <arg name="map_size_z" default="3.0"/>
 
   <param name="robot_description" command="$(find xacro)/xacro '$(find ir100_description)/urdf/ir100_robot.xacro'"/>
 
@@ -46,7 +52,13 @@
     <arg name="profile_max_oneshot_calls" value="$(arg profile_max_oneshot_calls)"/>
     <arg name="profile_oneshot_stride" value="$(arg profile_oneshot_stride)"/>
     <arg name="profile_oneshot_max_jump_layers" value="$(arg profile_oneshot_max_jump_layers)"/>
+    <arg name="profile_lateral_corridor" value="$(arg profile_lateral_corridor)"/>
+    <arg name="profile_poly_piece_length" value="$(arg profile_poly_piece_length)"/>
     <arg name="global_map_refresh" value="$(arg global_map_refresh)"/>
+    <arg name="obstacles_inflation" value="$(arg obstacles_inflation)"/>
+    <arg name="map_size_x" value="$(arg map_size_x)"/>
+    <arg name="map_size_y" value="$(arg map_size_y)"/>
+    <arg name="map_size_z" value="$(arg map_size_z)"/>
   </include>
 
   <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher">

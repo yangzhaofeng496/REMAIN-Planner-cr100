@@ -206,10 +206,12 @@ namespace remani_planner
     // The front-end already supplies the arm's collision-free seed; a small
     // smoothing budget is sufficient and keeps one plan under the latency
     // target.
-    // Keep the real-time replanning budget bounded. Collision gradients are
-    // evaluated numerically, so a large L-BFGS iteration cap can monopolize
-    // the planner thread for tens of seconds.
-    lbfgs_params.max_iterations = 10;
+    // Keep the real-time replanning budget bounded.  Collision gradients are
+    // evaluated numerically at every control point, so a fixed large iteration
+    // cap monopolises the planner thread for minutes on long trajectories.
+    // Cap the total work by the problem size instead.
+    lbfgs_params.max_iterations =
+        std::max(10, std::min(100, 2400 / std::max(1, piece_num_all)));
 
     double final_cost;
     
@@ -248,6 +250,38 @@ namespace remani_planner
     good_traj = IsTrajSafe(singul_traj_data);
     if(result == lbfgs::LBFGSERR_INVALID_FUNCVAL){
       return false;
+    }
+
+    if (!good_traj) {
+      // The L-BFGS solve is iteration-bounded and can leave a small residual
+      // collision or velocity violation.  The front-end seed is built from a
+      // collision-checked coupled RRT path, so when the optimized result is
+      // rejected, fall back to that seed instead of failing the whole plan.
+      std::vector<poly_traj::MinSnapOpt<8>> seed_container(traj_num_);
+      SingulTrajData seed_data;
+      double seed_t = 0.0;
+      for (int i = 0; i < traj_num_; ++i) {
+        seed_container[i].reset(iniState_container_[i], finState_container_[i],
+                                piece_num_container_[i]);
+        seed_container[i].generate(initInnerPts_container[i], initT_container[i]);
+        seed_data.addSingulTraj(seed_container[i].getTraj(singul_container[i]), seed_t);
+        seed_t = seed_data.singul_traj.back().end_time;
+      }
+      if (IsTrajSafe(seed_data)) {
+        ROS_WARN("[Optimizer] optimized trajectory rejected; using collision-checked front-end seed");
+        optCps_container.clear();
+        optWps_container.clear();
+        optT_container.clear();
+        optEECps_container.clear();
+        SnapOpt_container_ = seed_container;
+        for (int i = 0; i < traj_num_; ++i) {
+          optCps_container.push_back(initInnerPts_container[i]);
+          optWps_container.push_back(seed_container[i].getInitConstrainPoints(1));
+          optT_container.push_back(seed_container[i].get_T1());
+        }
+        return true;
+      }
+      ROS_WARN("[Optimizer] optimized trajectory rejected and front-end seed failed safety check");
     }
 
     optCps_container.clear();
@@ -899,20 +933,37 @@ namespace remani_planner
       // Keep the coupled optimizer from trading arm clearance for snap/time
       // cost near the crossbar.  The front-end RRT already supplies a valid
       // arm posture; this term must preserve that clearance during smoothing.
-      const double weight = 2.0e6;
+      const double weight = 1.0e7;
+      // The optimizer previously lost the arm/arm and arm/base gradients in
+      // URDF mode, so it could smooth the seed into a self-collision that
+      // IsTrajSafe() then rejected.  This term keeps the URDF clearance.
+      const double self_weight = 1.0e7;
       auto mesh_cost = [&](const Eigen::VectorXd &s) {
         return mm_config_->urdfManiObstacleCost(
             Eigen::Vector3d(s(0), s(1), mm_config_->calYaw(vel.head(2), singul_container_[trajid])),
             s.tail(manipulator_dof_), true);
       };
-      const double c0 = mesh_cost(q);
-      if (c0 > 0.0) {
+      auto self_cost = [&](const Eigen::VectorXd &s) {
+        return mm_config_->urdfManiSelfCollisionCost(s.tail(manipulator_dof_), true);
+      };
+      const double c_env = mesh_cost(q);
+      const double c_self = self_cost(q);
+      if (c_env > 0.0) {
         ret = true;
-        costp_mani += weight * c0;
+        costp_mani += weight * c_env;
         for (int k = mobile_base_dof_; k < traj_dim_; ++k) {
           Eigen::VectorXd qp = q, qm = q;
           qp(k) += eps; qm(k) -= eps;
           gradp(k) += weight * (mesh_cost(qp) - mesh_cost(qm)) / (2.0 * eps);
+        }
+      }
+      if (c_self > 0.0) {
+        ret = true;
+        costp_self += self_weight * c_self;
+        for (int k = mobile_base_dof_; k < traj_dim_; ++k) {
+          Eigen::VectorXd qp = q, qm = q;
+          qp(k) += eps; qm(k) -= eps;
+          gradp(k) += self_weight * (self_cost(qp) - self_cost(qm)) / (2.0 * eps);
         }
       }
     }
@@ -1345,7 +1396,10 @@ namespace remani_planner
           double t_acc_vel = 0;
           if(j == 0 || j == piece_num - 1){
             if(err <= dist_acc){
-              t_acc_vel = sqrt(err / max_joint_acc_);
+              // Rest-to-rest, acceleration-limited move: the minimum time is
+              // 2*sqrt(err/a), not sqrt(err/a).  The missing factor of two made
+              // every seed start/end piece exceed the joint acceleration limit.
+              t_acc_vel = 2.0 * sqrt(err / max_joint_acc_);
             }else{
               t_acc_vel = (err - dist_acc) / max_joint_vel_ + 2 * t_acc;
             }
@@ -1356,8 +1410,11 @@ namespace remani_planner
         }
         t_list[j] = max_t;
       }
-      t_list[0] *= 1.5;
-      t_list[piece_num - 1] *= 1.5;
+      // Minimum-snap overshoots the trapezoidal estimate at the boundaries,
+      // so give the first and last pieces extra slack to stay within the
+      // joint acceleration limit.
+      t_list[0] *= 2.5;
+      t_list[piece_num - 1] *= 2.5;
       // Leave acceleration headroom for the differential-drive wheels.
       // Without this margin the optimizer repeatedly starts from a seed with
       // infeasible wheel alpha and spends several retries repairing it.

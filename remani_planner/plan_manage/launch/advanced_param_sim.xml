@@ -30,7 +30,10 @@
 	<arg name="profile_max_oneshot_calls" default="0"/>
 	<arg name="profile_oneshot_stride" default="1"/>
 	<arg name="profile_oneshot_max_jump_layers" default="0"/>
+	<arg name="profile_lateral_corridor" default="0.3"/>
+	<arg name="profile_poly_piece_length" default="2.0"/>
 	<arg name="global_map_refresh" default="false"/>
+	<arg name="obstacles_inflation" default="0.15"/>
 
 	<arg name="cx"/>
 	<arg name="cy"/>
@@ -57,6 +60,9 @@
 		<param if="$(arg override_planner_profile)" name="search/max_oneshot_calls" value="$(arg profile_max_oneshot_calls)" type="int"/>
 		<param if="$(arg override_planner_profile)" name="search/oneshot_stride" value="$(arg profile_oneshot_stride)" type="int"/>
 		<param if="$(arg override_planner_profile)" name="search/oneshot_max_jump_layers" value="$(arg profile_oneshot_max_jump_layers)" type="int"/>
+		<!-- <=0 disables the straight-line lateral corridor (needed to detour
+		     around large obstacles such as the locomotive cloud). -->
+		<param if="$(arg override_planner_profile)" name="search/lateral_corridor" value="$(arg profile_lateral_corridor)" type="double"/>
 
 		<remap from="~gripper_cmd" to="$(arg gripper_cmd_topic)"/>
 		<remap from="~gripper_state" to="$(arg gripper_state_topic)"/>
@@ -84,7 +90,7 @@
 		<param name="grid_map/local_update_range_x"   value="17" /> 
 		<param name="grid_map/local_update_range_y"   value="17" /> 
 		<param name="grid_map/local_update_range_z"   value="3.0" /> 
-		<param name="grid_map/obstacles_inflation"    value="0.15" /> 
+		<param name="grid_map/obstacles_inflation"    value="$(arg obstacles_inflation)" /> 
 		<param name="grid_map/local_map_margin"       value="15"/>
 		<param name="grid_map/ground_height"          value="-0.01"/>
 		<param name="grid_map/z_length"               value="0.0"/>
@@ -125,7 +131,7 @@
 
 		<!-- planner manager -->
 		<param name="manager/control_points_distance"           value="0.4" type="double"/>
-		<param name="manager/polyTraj_piece_length"             value="2.0" type="double"/>
+		<param name="manager/polyTraj_piece_length"             value="$(arg profile_poly_piece_length)" type="double"/>
 		<param name="manager/feasibility_tolerance"             value="0.05" type="double"/>
   	</node>
 

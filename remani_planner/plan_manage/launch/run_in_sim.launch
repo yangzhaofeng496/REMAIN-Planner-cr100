@@ -2,9 +2,9 @@
     <arg name="publish_robot_state" default="true"/>
     <arg name="load_robot_description" default="true"/>
     <arg name="load_map" default="true"/>
-    <arg name="map_size_x" value="20.0"/>
-    <arg name="map_size_y" value="10.0"/>
-    <arg name="map_size_z" value=" 3.0"/>
+    <arg name="map_size_x" default="20.0"/>
+    <arg name="map_size_y" default="16.0"/>
+    <arg name="map_size_z" default="3.0"/>
 
     <!-- Load robot description -->
     <param if="$(arg load_robot_description)" name="robot_description" textfile="$(find dobot_description)/urdf/cr10_robot.urdf" />
@@ -42,7 +42,10 @@
     <arg name="profile_max_oneshot_calls" default="0"/>
     <arg name="profile_oneshot_stride" default="1"/>
     <arg name="profile_oneshot_max_jump_layers" default="0"/>
+    <arg name="profile_lateral_corridor" default="0.3"/>
+    <arg name="profile_poly_piece_length" default="2.0"/>
     <arg name="global_map_refresh" default="false"/>
+    <arg name="obstacles_inflation" default="0.15"/>
 
     <!-- main algorithm params -->
     <include file="$(find remani_planner)/launch/advanced_param_sim.xml">
@@ -78,7 +81,10 @@
       <arg name="profile_max_oneshot_calls" value="$(arg profile_max_oneshot_calls)"/>
       <arg name="profile_oneshot_stride" value="$(arg profile_oneshot_stride)"/>
       <arg name="profile_oneshot_max_jump_layers" value="$(arg profile_oneshot_max_jump_layers)"/>
+      <arg name="profile_lateral_corridor" value="$(arg profile_lateral_corridor)"/>
+      <arg name="profile_poly_piece_length" value="$(arg profile_poly_piece_length)"/>
       <arg name="global_map_refresh" value="$(arg global_map_refresh)"/>
+      <arg name="obstacles_inflation" value="$(arg obstacles_inflation)"/>
       <!-- topic of point cloud measurement, such as from LIDAR  -->
       <!-- don't set camera pose and depth, if you already set this one! -->
       <arg name="cloud_topic" value="pcl_render_node/cloud"/>

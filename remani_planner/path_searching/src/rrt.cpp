@@ -788,6 +788,15 @@ struct ScopedRrtTiming {
           max_size_[k] = max(start_pt_list[i][k] + fabs(end_pt_list[j][k] - start_pt_list[i][k]) + 20.0, max_size_[k]);
           min_size_[k] = min(start_pt_list[i][k] - fabs(end_pt_list[j][k] - start_pt_list[i][k]) - 20.0, min_size_[k]);
         }
+
+    // Optional straight-corridor constraint: confine the base y sampling so a
+    // lateral detour around an obstacle is not possible.
+    if(lateral_corridor_ > 1.0e-6){
+      const double y_lo = std::min(sample_start_(1), sample_end_(1)) - lateral_corridor_;
+      const double y_hi = std::max(sample_start_(1), sample_end_(1)) + lateral_corridor_;
+      min_size_[1] = std::max(min_size_[1], y_lo);
+      max_size_[1] = std::min(max_size_[1], y_hi);
+    }
   }
 
   double RrtPlanning::calAngleErr(double angle1, double angle2){
@@ -1048,7 +1057,14 @@ struct ScopedRrtTiming {
     t = max(len / max_vel_, t);
 
     for(int i = 0; i < manipulator_dof_; ++i){
-      t = max(calAngleErr(pre_state(mobile_base_dof_ + i) , cur_state(mobile_base_dof_ + i)) / max_joint_vel_, t);
+      const double err = calAngleErr(pre_state(mobile_base_dof_ + i) , cur_state(mobile_base_dof_ + i));
+      t = max(err / max_joint_vel_, t);
+      // The previous timing only respected joint velocity, so minimum-snap
+      // seeds could exceed the joint acceleration limit between segments.
+      // A rest-to-rest move of err needs at least 2*sqrt(err/a) under the
+      // acceleration bound.
+      if (max_joint_acc_ > 1.0e-6)
+        t = max(t, 2.0 * std::sqrt(err / max_joint_acc_));
     }
     return t;
   }
@@ -1143,6 +1159,7 @@ struct ScopedRrtTiming {
     }
     nh.param("mm/manipulator_max_vel", max_joint_vel_, -1.0);
     nh.param("mm/manipulator_max_acc", max_joint_acc_, -1.0);
+    nh.param("search/lateral_corridor", lateral_corridor_, -1.0);
     nh.param("mm/manipulator_dof", manipulator_dof_, -1);
     nh.param("mm/manipulator_thickness", mani_thickness_, 0.1);
 

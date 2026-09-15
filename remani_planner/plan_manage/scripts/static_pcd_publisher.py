@@ -181,6 +181,7 @@ def main():
         initial_position = anchor
         initial_yaw = rpy[2]
 
+
     fields = [PointField("x", 0, PointField.FLOAT32, 1),
               PointField("y", 4, PointField.FLOAT32, 1),
               PointField("z", 8, PointField.FLOAT32, 1)]

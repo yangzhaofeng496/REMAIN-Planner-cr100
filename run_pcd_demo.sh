@@ -5,7 +5,7 @@
 #
 # It wraps docker/run_ir100_cr10_pcd.sh and fills in recommended defaults for
 # the 2.7M-point 1 cm cloud:
-#   - voxel downsample at 3 cm so GridMap stays light;
+#   - voxel downsample at 8 cm so GridMap/RViz stay light;
 #   - keep the world-frame routing on /map_generator/global_cloud.
 #
 # Overridable environment variables:
@@ -24,7 +24,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${REPO_ROOT}"
 
 export DISPLAY="${DISPLAY:-:0}"
-export REMANI_VOXEL_LEAF_SIZE="${REMANI_VOXEL_LEAF_SIZE:-0.03}"
+export REMANI_VOXEL_LEAF_SIZE="${REMANI_VOXEL_LEAF_SIZE:-0.08}"
 
 if [[ "${REMANI_KILL_OLD:-0}" == "1" ]]; then
   echo "[run_pcd_demo] stopping previous demo container (if any)"

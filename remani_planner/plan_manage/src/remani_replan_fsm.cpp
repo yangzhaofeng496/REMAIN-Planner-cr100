@@ -84,6 +84,11 @@ namespace remani_planner
     /* callback */
     exec_timer_ = nh.createTimer(ros::Duration(0.01), &REMANIReplanFSM::execFSMCallback, this);
     safety_timer_ = nh.createTimer(ros::Duration(0.01), &REMANIReplanFSM::checkCollisionCallback, this);
+    // Always-on collision watch for the measured state (also useful while
+    // manually driving the base/arm).  Publishes -1 when clear, otherwise the
+    // collision type: 0 car-env, 1 arm-env, 2 arm-car, 3 arm-arm.
+    collision_type_pub_ = nh.advertise<std_msgs::Int32>("collision_type", 1, true);
+    watch_timer_ = nh.createTimer(ros::Duration(0.1), &REMANIReplanFSM::collisionWatchCallback, this);
 
     odom_sub_ = nh.subscribe("odom_world", 1, &REMANIReplanFSM::mmCarOdomCallback, this);
     joint_state_sub_ = nh.subscribe("joint_state", 1, &REMANIReplanFSM::mmManiOdomCallback, this);
@@ -367,6 +372,24 @@ namespace remani_planner
     }
   }
 
+  void REMANIReplanFSM::collisionWatchCallback(const ros::TimerEvent &e){
+    if (!have_odom_ || mm_state_pos_.size() < traj_dim_)
+      return;
+    Eigen::Vector3d car_state(mm_state_pos_(0), mm_state_pos_(1), mm_car_yaw_);
+    Eigen::VectorXd mani_state = mm_state_pos_.tail(manipulator_dim_);
+    int coll_type = -1;
+    bool coll = planner_manager_->mm_config_->checkcollision(car_state, mani_state, false, coll_type);
+    std_msgs::Int32 msg;
+    msg.data = coll ? coll_type : -1;
+    collision_type_pub_.publish(msg);
+    if (coll && coll_type != last_collision_type_){
+      ROS_WARN("[CollisionWatch] COLLISION type=%d (0 car-env, 1 arm-env, 2 arm-car, 3 arm-arm)", coll_type);
+    } else if (!coll && last_collision_type_ != -1){
+      ROS_INFO("[CollisionWatch] clear");
+    }
+    last_collision_type_ = coll ? coll_type : -1;
+  }
+
   bool REMANIReplanFSM::planNextWaypoint(const Eigen::VectorXd next_wp, const double next_yaw)
   {
     std::vector<Eigen::VectorXd> one_pt_wps;
@@ -445,10 +468,25 @@ namespace remani_planner
     if(target_type_ == TARGET_TYPE::MANUAL_TARGET){
       end_pt_(0) = msg->pose.position.x;
       end_pt_(1) = msg->pose.position.y;
-      // A 2D Nav Goal specifies only the mobile base. Keep the arm target
-      // equal to the measured posture instead of an unrelated zero vector.
-      end_pt_.tail(manipulator_dim_) = mm_state_pos_.tail(manipulator_dim_);
       end_yaw_ = tf::getYaw(msg->pose.orientation);
+      ROS_WARN("[FSM] new goal: x=%.3f y=%.3f yaw=%.3f (start x=%.3f y=%.3f yaw=%.3f)",
+               end_pt_(0), end_pt_(1), end_yaw_,
+               mm_state_pos_(0), mm_state_pos_(1), mm_car_yaw_);
+      // A 2D Nav Goal only specifies the mobile base.  Keep the measured arm
+      // posture when it is already collision-free at the goal (this also keeps
+      // the cheap stationary-arm path); only fold to a sampled feasible
+      // posture when the measured one would collide there.
+      Eigen::VectorXd goal_mani = mm_state_pos_.tail(manipulator_dim_);
+      Eigen::Vector3d goal_car(end_pt_(0), end_pt_(1), end_yaw_);
+      int goal_coll_type = -1;
+      if (planner_manager_->mm_config_->checkcollision(goal_car, goal_mani, false, goal_coll_type)) {
+        ROS_WARN("[FSM] measured arm posture collides at goal (type=%d); sampling a folded posture",
+                 goal_coll_type);
+        if (!planner_manager_->mm_config_->sampleFeasibleManiState(goal_car, goal_mani)) {
+          ROS_WARN("[FSM] no feasible goal arm posture found; keeping measured posture");
+        }
+      }
+      end_pt_.tail(manipulator_dim_) = goal_mani;
     }else{
       ROS_ERROR("wrong target type: %d", target_type_);
       return;

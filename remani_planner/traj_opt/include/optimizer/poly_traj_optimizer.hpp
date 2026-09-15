@@ -140,6 +140,9 @@ namespace remani_planner
     inline const ConstrainPoints *getControlPointsPtr(void) { return &cps_; }
     inline const poly_traj::MinSnapOpt<8> *getMinJerkOptPtr(void) { return &SnapOpt_; }
     inline const std::vector<poly_traj::MinSnapOpt<8>> *getMinSnapOptContainerPtr(void) { return &SnapOpt_container_; }
+    // Replace the optimized container with a fallback (e.g. the front-end RRT
+    // seed) when the backend smoothing fails the final safety gate.
+    inline void setMinSnapOptContainer(const std::vector<poly_traj::MinSnapOpt<8>> &container) { SnapOpt_container_ = container; }
     inline int get_cps_num_prePiece_(){return cps_num_prePiece_;};
     bool checkCollision(const SingulTrajData &traj, double t, int &coll_type);
 

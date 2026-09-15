@@ -15,12 +15,20 @@ search:
   max_arc           : 0.4
   min_turning_radius: 0.2
   lambda_heu        : 1
-  max_seach_time    : 1.0
+  # The real locomotive cloud can force a long detour; 1 s was not enough to
+  # find the around-the-cloud route in the enlarged map.
+  max_seach_time    : 15.0
+  # Forbid lateral detours: the base must stay within this half-width (m) of
+  # the straight start->goal line. <=0 disables the constraint.
+  lateral_corridor  : 0.3
   check_num         : 8
   dist_resolution   : 0.2
   sample_time       : 0.1
   curvatureDisCoe   : 0.4
-  allocate_num      : 100000
+  # The large map plus a forced detour around the locomotive can expand more
+  # than 100k hybrid-A* nodes; 100k made the base search report "run out of
+  # memory" (NO_PATH) before finding the route.
+  allocate_num      : 800000
 
   goal_rate: 0.8
   max_loop_num: 5000

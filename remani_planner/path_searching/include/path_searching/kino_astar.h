@@ -142,6 +142,9 @@ class KinoAstar{
 
     double min_turning_radius_;
     double curvatureDisCoe_;
+    // If > 0, the base may deviate at most this far (m) from the straight
+    // start->goal line, which forbids lateral detours around obstacles.
+    double lateral_corridor_{-1.0};
 
     // ompl::base::StateSpacePtr shotptr_;
     std::vector<ompl::base::StateSpacePtr> shotptr_list_;

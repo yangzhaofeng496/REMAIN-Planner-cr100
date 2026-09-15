@@ -121,6 +121,10 @@ namespace remani_planner
 
     ros::Publisher reached_pub_, start_pub_;
 
+    ros::Timer watch_timer_;
+    ros::Publisher collision_type_pub_;
+    int last_collision_type_{-1};
+
     ros::Time t_last_Astar_;
 
     int map_state_;
@@ -142,6 +146,7 @@ namespace remani_planner
     /* ROS functions */
     void execFSMCallback(const ros::TimerEvent &e);
     void checkCollisionCallback(const ros::TimerEvent &e);
+    void collisionWatchCallback(const ros::TimerEvent &e);
     bool planNextWaypoint(const Eigen::VectorXd next_wp, const double nect_yaw);
     void waypointCallback(const geometry_msgs::PoseStamped::ConstPtr &msg);
     void mmCarOdomCallback(const nav_msgs::OdometryConstPtr &msg);

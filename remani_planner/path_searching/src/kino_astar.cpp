@@ -46,6 +46,7 @@ void KinoAstar::setParam(ros::NodeHandle& nh, const std::shared_ptr<GridMap> &en
   nh.param("search/sample_time", sample_time_, 0.1);
   nh.param("search/min_turning_radius", min_turning_radius_, 0.1);
   nh.param("search/curvatureDisCoe", curvatureDisCoe_, 0.4);
+  nh.param("search/lateral_corridor", lateral_corridor_, -1.0);
   nh.param("mm/mobile_base_non_singul_vel", non_siguav_, 0.01);
 
   double dist_resolution;
@@ -511,6 +512,15 @@ int KinoAstar::search(Eigen::VectorXd &start_state, const Eigen::VectorXd &end_s
       stateTransit(cur_state, input, pro_state);
       if(!sdf_map_->isInMap(Eigen::Vector2d(pro_state(0), pro_state(1)))){
         continue;
+      }
+      // Optional straight-corridor constraint: forbid lateral detours by
+      // keeping the base within lateral_corridor_ of the start->goal line.
+      if(lateral_corridor_ > 1.0e-6){
+        const double dx = end_state_(0) - start_state_(0);
+        const double t = std::fabs(dx) > 1.0e-6 ? (pro_state(0) - start_state_(0)) / dx : 0.0;
+        const double y_line = start_state_(1) + t * (end_state_(1) - start_state_(1));
+        if(std::fabs(pro_state(1) - y_line) > lateral_corridor_)
+          continue;
       }
 
       Eigen::Vector2i pro_id = sdf_map_->pos2dToIndex(pro_state.head(2));
