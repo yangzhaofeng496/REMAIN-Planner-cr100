@@ -55,3 +55,11 @@ target_link_libraries(path_searching
     ${catkin_LIBRARIES} 
     ${OMPL_LIBRARIES}
     )  
+
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(layered_waypoint_test test/layered_waypoint_test.cpp)
+  if(TARGET layered_waypoint_test)
+    target_link_libraries(layered_waypoint_test path_searching
+      ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OMPL_LIBRARIES})
+  endif()
+endif()
