@@ -48,6 +48,27 @@ struct ScopedSampleTiming {
     return true;
   }
 
+  bool acceptIkCandidate(bool ik_ok,
+                         const Eigen::Vector3d &car_state,
+                         const Eigen::VectorXd &joint_state,
+                         const ManiCollisionFn &collision,
+                         int &collision_type,
+                         std::array<size_t, 4> *collision_type_counts,
+                         size_t *ik_failure_count) {
+    collision_type = -1;
+    if (!ik_ok) {
+      if (ik_failure_count != nullptr) ++(*ik_failure_count);
+      return false;
+    }
+    if (collision(car_state, joint_state, collision_type)) {
+      if (collision_type_counts != nullptr && collision_type >= 0 && collision_type < 4) {
+        ++(*collision_type_counts)[collision_type];
+      }
+      return false;
+    }
+    return true;
+  }
+
   bool SampleMani::sampleManiSearch(const bool astar_succ, const Eigen::VectorXd &start_state, const Eigen::VectorXd &end_state,
                     const std::vector<Eigen::Vector3d> &car_state_list, const std::vector<Eigen::Vector3d> &car_state_list_check, 
                     const std::vector<double> &t_list, const std::vector<int> &singul_container, const int start_singul,// size = t_list.size()
@@ -58,6 +79,8 @@ struct ScopedSampleTiming {
     collision_check_calls_ = 0;
     edge_interpolation_checks_ = 0;
     nodes_created_ = 0;
+    collision_type_counts_.fill(0);
+    ik_failure_count_ = 0;
     simple_path_container.clear();
     singul_container_new.clear();
     yaw_list_container.clear();
@@ -944,10 +967,17 @@ struct ScopedSampleTiming {
     // IK success only proves reachability.  Every layer node must pass the
     // complete coupled collision gate, including base-cloud, arm-cloud,
     // arm-base, and arm-arm checks, before it can enter either RRT tree.
+    // Route the decision through the single acceptance gate so IK failure
+    // and collision rejection share one implementation.
     int collision_type = -1;
-    if(mm_config_->checkcollision(car_state_list_[node->index], node->state,
-                                  false, collision_type))
-    {
+    const bool accepted = acceptIkCandidate(
+        true, car_state_list_[node->index], node->state,
+        [this](const Eigen::Vector3d &car_state, const Eigen::VectorXd &joint_state,
+               int &type) {
+          return mm_config_->checkcollision(car_state, joint_state, false, type);
+        },
+        collision_type, &collision_type_counts_, &ik_failure_count_);
+    if (!accepted) {
       node->node_state = ManiPathNode::NODE_STATE::COLLISION;
       ROS_DEBUG("[SampleMani] reject IK node: layer=%d collision_type=%d",
                 node->index, collision_type);
@@ -1019,6 +1049,7 @@ struct ScopedSampleTiming {
         Eigen::VectorXd ik_state;
         if (!mm_config_->solveEndEffectorIK(target, target_rotation,
                                              ik_seed, ik_state)) {
+          ++ik_failure_count_;
           publishCartesianSample(target, car_state_list_[sample_idx], 0);
           continue;
         }

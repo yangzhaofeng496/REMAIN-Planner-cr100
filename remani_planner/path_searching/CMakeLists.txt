@@ -62,4 +62,10 @@ if(CATKIN_ENABLE_TESTING)
     target_link_libraries(layered_waypoint_test path_searching
       ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OMPL_LIBRARIES})
   endif()
+
+  catkin_add_gtest(ik_candidate_acceptance_test test/ik_candidate_acceptance_test.cpp)
+  if(TARGET ik_candidate_acceptance_test)
+    target_link_libraries(ik_candidate_acceptance_test path_searching
+      ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OMPL_LIBRARIES})
+  endif()
 endif()

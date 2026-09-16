@@ -13,6 +13,8 @@
 #include <time.h>
 #include <random>
 #include <cstdint>
+#include <array>
+#include <functional>
 #include "plan_env/grid_map.h"
 #include "mm_config/mm_config.hpp"
 #include "path_searching/rrt.h"
@@ -38,6 +40,26 @@ namespace mani_sample {
                                const Eigen::VectorXd &q1,
                                int samples,
                                std::vector<Eigen::VectorXd> &out);
+
+  // Coupled collision checker: returns true when the given coupled base/arm
+  // state is in collision and reports the collision type
+  // (0 car, 1 arm, 2 arm-car, 3 arm-arm).
+  using ManiCollisionFn = std::function<bool(const Eigen::Vector3d &car_state,
+                                             const Eigen::VectorXd &joint_state,
+                                             int &collision_type)>;
+
+  // Single acceptance gate for a Cartesian IK candidate.  Returns true only
+  // when IK succeeded and the complete coupled collision gate is clear.
+  // Collision failures are tallied per collision type; IK failures are
+  // tallied separately.  This never inserts a node: callers must resample
+  // whenever it returns false.
+  bool acceptIkCandidate(bool ik_ok,
+                         const Eigen::Vector3d &car_state,
+                         const Eigen::VectorXd &joint_state,
+                         const ManiCollisionFn &collision,
+                         int &collision_type,
+                         std::array<size_t, 4> *collision_type_counts,
+                         size_t *ik_failure_count);
 
   class ManiPathNode{
     public:
@@ -111,6 +133,10 @@ namespace mani_sample {
     size_t collision_check_calls_{0};
     size_t edge_interpolation_checks_{0};
     size_t nodes_created_{0};
+    // Per-type IK candidate collision rejections and IK failures.  Reported
+    // by sampleLayerCandidates() so a failing layer can be diagnosed.
+    std::array<size_t, 4> collision_type_counts_{{0, 0, 0, 0}};
+    size_t ik_failure_count_{0};
     Eigen::Matrix3d phi_; // state transit matrix
     Eigen::Matrix4d T_q_0_;
     std::vector<Eigen::Matrix4Xd> manipulator_link_pts_;
