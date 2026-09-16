@@ -41,6 +41,10 @@ search:
   # The legacy shared-posture and stationary-arm shortcuts are disabled so
   # every base layer gets its own collision-checked IK candidates.
   enable_shared_posture_fast_path: false
+  # The layered route is primary; when no per-layer candidate can connect,
+  # fall back to one globally safe folded posture (some undercarriage
+  # bottlenecks have no reachable Cartesian candidate at all).
+  enable_shared_posture_fallback: true
   cartesian_samples_per_layer: 64
   cartesian_sample_radius_xy: 0.32
   cartesian_sample_z_min: 1.15

@@ -190,6 +190,11 @@ namespace mani_sample {
     // locomotive PCD scene disables it so every base trajectory layer gets
     // its own IK candidates and inter-layer connections.
     bool enable_shared_posture_fast_path_{true};
+    // When true, the single safe folded posture search is retried after the
+    // layered route fails.  The locomotive scene keeps the layered route as
+    // primary but enables this fallback because only a globally safe posture
+    // can transit some undercarriage bottlenecks.
+    bool enable_shared_posture_fallback_{false};
     // Per-layer Cartesian IK candidate sampling parameters for the fixed
     // locomotive scene.
     int cartesian_samples_per_layer_{64};
@@ -262,6 +267,19 @@ namespace mani_sample {
     // mismatch, or missing candidate layers.
     bool connectLayerCandidates(int layer, const ManiPathNodePtr &from,
                                 const ManiPathNodePtr &to);
+    // Search for one folded arm posture that stays collision free over the
+    // whole mobile-base path and is reachable from the start.  Returns true
+    // and fills the output containers on success.
+    bool trySharedPosturePath(
+        const Eigen::VectorXd &start_state, const Eigen::VectorXd &end_state,
+        const std::vector<Eigen::Vector3d> &car_state_list,
+        const std::vector<Eigen::Vector3d> &car_state_list_check,
+        const std::vector<double> &t_list,
+        const std::vector<int> &singul_container,
+        std::vector<std::vector<Eigen::VectorXd>> &simple_path_container,
+        std::vector<int> &singul_container_new,
+        std::vector<std::vector<double>> &yaw_list_container,
+        std::vector<Eigen::VectorXd> &t_list_container);
     remani_planner::RrtPlanning::Ptr rrt_plan_;
     std::shared_ptr<remani_planner::MMConfig> mm_config_;
     SampleMani():

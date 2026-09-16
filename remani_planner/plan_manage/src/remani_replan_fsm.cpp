@@ -47,6 +47,7 @@ namespace remani_planner
     start_jer_.resize(traj_dim_);
 
     nh.param("fsm/waypoint_num", waypoint_num_, -1);
+    wpt_id_ = 0;
 
     waypoints_.clear();
     waypoints_yaw_.clear();
@@ -758,10 +759,14 @@ namespace remani_planner
         planning_horizen_, start_pos_, start_yaw_, end_pt_, end_yaw_,
         local_target_pt_, local_target_vel_, local_target_acc_, reach_horizon);
     bool local_target_gripper;
-    if(reach_horizon){
-      local_target_gripper = gripper_state_;
-    }else{
+    // wpt_id_ is only assigned for preset targets.  Manual goals leave it at
+    // its default, so guard the waypoint lookup instead of indexing an
+    // uninitialized value into waypoint_gripper_close_.
+    if(!reach_horizon && wpt_id_ >= 0 &&
+       wpt_id_ < static_cast<int>(waypoint_gripper_close_.size())){
       local_target_gripper = waypoint_gripper_close_[wpt_id_];
+    }else{
+      local_target_gripper = gripper_state_;
     }
     local_target_acc_.setZero();
     double local_target_yaw = atan2(local_target_vel_(1), local_target_vel_(0)); // global traj is foreward, no need to take singul into account
