@@ -5,6 +5,8 @@
        callback on /map_generator/global_cloud, not through the body-frame
        depth/cloud fusion topic /pcl_render_node/cloud. -->
   <arg name="pcd_topic" default="/map_generator/global_cloud"/>
+  <arg name="display_topic" default="/map_generator/rviz_cloud"/>
+  <arg name="display_voxel_leaf_size" default="0.03"/>
   <arg name="voxel_leaf_size" default="0.0"/>
   <!-- Default placement centres the locomotive cloud roughly 3 m in front of
        the robot and inside the 20x8x3 m map.  Adjust for the real setup. -->
@@ -19,7 +21,7 @@
   <arg name="pose_topic" default=""/>
   <!-- Startup placement [x, y, z, yaw]; [] keeps T_world_cloud.  Saved by
        save_pcd_pose.sh and replayed by run_pcd_demo.sh. -->
-  <arg name="initial_pose" default="[]"/>
+  <arg name="initial_pose" default="[2.995552, -0.000117, 0.6, 0.0]"/>
   <!-- The real locomotive cloud spans several metres; allow a larger world so
        far goals beyond the cloud remain inside the planner's map. -->
   <arg name="map_size_x" default="60.0"/>
@@ -31,7 +33,8 @@
        re-published cloud rebuild the world map so 2D Pose Estimate moves the
        locomotive interactively. -->
   <include file="$(find remani_planner)/launch/exp0_ir100_cr10_manual.launch">
-    <arg name="load_map" value="false"/>
+    <!-- The PCD publisher is the actual global map source for this demo. -->
+    <arg name="load_map" value="true"/>
     <arg name="global_map_refresh" value="true"/>
     <!-- Known static map: keep a tight inflation so the raised undercarriage
          still leaves room for the folded manipulator. -->
@@ -58,6 +61,12 @@
     <arg name="map_size_z" value="$(arg map_size_z)"/>
   </include>
 
+  <!-- The locomotive demo intentionally uses the undercarriage space.  Do
+       not reject a route merely because an artificial vertical column above
+       the chassis centre reaches 1.1 m; the real chassis/arm-vs-PCD checks
+       remain active. -->
+  <param name="/remani_planner_node/mm/base_min_clearance_z" value="0.0"/>
+
   <!-- T_world_cloud maps the PCD frame onto world; the PCD file is never
        rewritten.  Optionally voxel-downsample the environment cloud. -->
   <node pkg="remani_planner" type="static_pcd_publisher.py"
@@ -65,6 +74,8 @@
     <param name="pcd_file" value="$(arg pcd_file)"/>
     <param name="frame_id" value="world"/>
     <param name="topic" value="$(arg pcd_topic)"/>
+    <param name="display_topic" value="$(arg display_topic)"/>
+    <param name="display_voxel_leaf_size" value="$(arg display_voxel_leaf_size)"/>
     <param name="rate" value="1.0"/>
     <param name="pose_topic" value="$(arg pose_topic)"/>
     <param name="initial_pose" type="yaml" value="$(arg initial_pose)"/>

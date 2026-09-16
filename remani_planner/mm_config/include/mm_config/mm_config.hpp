@@ -13,6 +13,8 @@
 #include "mm_config/urdf_collision_model.hpp"
 #include <kdl/chain.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
+#include <kdl/chainiksolverpos_nr_jl.hpp>
+#include <kdl/chainiksolvervel_pinv.hpp>
 
 namespace remani_planner
 {
@@ -113,6 +115,12 @@ namespace remani_planner
         bool sampleFeasibleManiState(const Eigen::Vector3d &car_state,
                                      Eigen::VectorXd &mani_state,
                                      int max_tries = 300);
+        // Solve a Cartesian end-effector sample expressed in the mobile-base
+        // frame.  This is used by the fixed locomotive scene sampler.
+        bool solveEndEffectorIK(const Eigen::Vector3d &target_position,
+                                const Eigen::Matrix3d &target_rotation,
+                                const Eigen::VectorXd &seed,
+                                Eigen::VectorXd &solution) const;
         
     private:
         std::vector<Eigen::Vector3d> color_set_;

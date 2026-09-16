@@ -6,7 +6,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV ROS_DISTRO=noetic
 ENV CATKIN_WS=/opt/remani_ws
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update || true \
+ && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+ && curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key | apt-key add - \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     git \

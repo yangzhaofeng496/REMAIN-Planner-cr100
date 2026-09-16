@@ -1,6 +1,29 @@
 #include "path_searching/sample_mani_RRT.h"
 
 namespace mani_sample{
+void SampleMani::publishCartesianSample(const Eigen::Vector3d &p_base,
+                                        const Eigen::Vector3d &car_state,
+                                        int status) {
+  if (!cartesian_sample_marker_pub_) return;
+  visualization_msgs::Marker marker;
+  marker.header.frame_id = "world";
+  marker.header.stamp = ros::Time::now();
+  marker.ns = "cartesian_ik_samples";
+  marker.id = cartesian_marker_id_++;
+  marker.type = visualization_msgs::Marker::SPHERE;
+  marker.action = visualization_msgs::Marker::ADD;
+  const double c = std::cos(car_state(2)), s = std::sin(car_state(2));
+  marker.pose.position.x = car_state(0) + c * p_base.x() - s * p_base.y();
+  marker.pose.position.y = car_state(1) + s * p_base.x() + c * p_base.y();
+  marker.pose.position.z = p_base.z();
+  marker.pose.orientation.w = 1.0;
+  marker.scale.x = marker.scale.y = marker.scale.z = 0.045;
+  marker.color.a = 0.9;
+  if (status == 1) { marker.color.g = 1.0; marker.color.r = 0.1; }
+  else if (status == 2) { marker.color.r = 1.0; marker.color.g = 0.05; }
+  else { marker.color.r = 1.0; marker.color.g = 0.75; marker.color.b = 0.05; }
+  cartesian_sample_marker_pub_.publish(marker);
+}
 namespace {
 struct ScopedSampleTiming {
   const char *name; ros::WallTime start;
@@ -8,6 +31,23 @@ struct ScopedSampleTiming {
   ~ScopedSampleTiming() { ROS_INFO("[Timing] %s=%.3f ms", name, (ros::WallTime::now()-start).toSec()*1000.0); }
 };
 }
+
+  bool interpolateJointSegment(const Eigen::VectorXd &q0,
+                               const Eigen::VectorXd &q1,
+                               int samples,
+                               std::vector<Eigen::VectorXd> &out) {
+    out.clear();
+    if (q0.size() == 0 || q0.size() != q1.size() || samples < 2) {
+      return false;
+    }
+    out.reserve(samples);
+    for (int i = 0; i < samples; ++i) {
+      const double alpha = static_cast<double>(i) / static_cast<double>(samples - 1);
+      out.push_back((1.0 - alpha) * q0 + alpha * q1);
+    }
+    return true;
+  }
+
   bool SampleMani::sampleManiSearch(const bool astar_succ, const Eigen::VectorXd &start_state, const Eigen::VectorXd &end_state,
                     const std::vector<Eigen::Vector3d> &car_state_list, const std::vector<Eigen::Vector3d> &car_state_list_check, 
                     const std::vector<double> &t_list, const std::vector<int> &singul_container, const int start_singul,// size = t_list.size()
@@ -23,11 +63,151 @@ struct ScopedSampleTiming {
     yaw_list_container.clear();
     t_list_container.clear();
 
+    // Target-specific recovery for the locomotive route: before entering the
+    // expensive joint-space RRT, look for one folded arm posture that remains
+    // collision-free over the complete mobile-base path. This avoids forcing
+    // the arm through unnecessary self-collision bottlenecks while the base
+    // passes the point cloud.
+    if (enable_shared_posture_fast_path_ &&
+        !car_state_list.empty() && car_state_list_check.size() > 1 &&
+        start_state.size() == manipulator_dof_ && end_state.size() == manipulator_dof_) {
+      Eigen::VectorXd shared_posture(manipulator_dof_);
+      std::mt19937 bottom_rng(0xB0770u);
+      std::uniform_real_distribution<double> ux(-0.32, 0.32);
+      std::uniform_real_distribution<double> uy(-0.24, 0.24);
+      // The rigid arm pedestal occupies z <= 1.1 in this scene; sample the
+      // lowest reachable workspace just above that clearance plane.
+      std::uniform_real_distribution<double> uz(1.15, 1.80);
+      std::uniform_real_distribution<double> da(-1.20, 1.20);
+      Eigen::Matrix3d bottom_rotation = Eigen::Matrix3d::Identity();
+      Eigen::Vector3d bottom_center(0.0, 0.0, 0.55);
+      std::vector<Eigen::Matrix4d> seed_tf;
+      if (mm_config_->getUrdfLinkTransforms(start_state, seed_tf) && !seed_tf.empty()) {
+        bottom_center = seed_tf.back().block<3, 1>(0, 3);
+        bottom_rotation = seed_tf.back().block<3, 3>(0, 0);
+        bottom_center.z() = std::min(bottom_center.z(), 0.75);
+      }
+      ROS_INFO("[SampleMani] Cartesian bottom IK box center=(%.3f, %.3f, %.3f)",
+               bottom_center.x(), bottom_center.y(), bottom_center.z());
+      int ik_failures = 0;
+      int collision_rejections = 0;
+      constexpr int kCartesianIkAttempts = 256;
+      for (int attempt = 0; attempt < kCartesianIkAttempts; ++attempt) {
+        // Cartesian samples are concentrated in a low box around the
+        // locomotive chassis; IK converts them into joint configurations.
+        Eigen::Vector3d ee_sample(bottom_center.x() + ux(bottom_rng),
+                                   bottom_center.y() + uy(bottom_rng),
+                                   uz(bottom_rng));
+        // Keep the end-effector near the current attitude, but perturb all
+        // three orientation axes so low Cartesian samples are not rejected by
+        // an unnecessarily rigid orientation constraint.
+        Eigen::Matrix3d sample_rotation =
+            bottom_rotation *
+            Eigen::AngleAxisd(da(bottom_rng), Eigen::Vector3d::UnitZ()).toRotationMatrix() *
+            Eigen::AngleAxisd(0.5 * da(bottom_rng), Eigen::Vector3d::UnitY()).toRotationMatrix() *
+            Eigen::AngleAxisd(0.5 * da(bottom_rng), Eigen::Vector3d::UnitX()).toRotationMatrix();
+        if (!mm_config_->solveEndEffectorIK(ee_sample, sample_rotation,
+                                             start_state,
+                                             shared_posture)) {
+          publishCartesianSample(ee_sample, car_state_list.front(), 0);
+          ++ik_failures;
+          continue;
+        }
+        bool safe_all = true;
+        for (size_t i = 0; i < car_state_list_check.size(); ++i) {
+          ++collision_check_calls_;
+          int collision_type = -1;
+          if (mm_config_->checkcollision(car_state_list_check[i], shared_posture, false,
+                                         collision_type)) {
+            safe_all = false;
+            break;
+          }
+        }
+        if (!safe_all) {
+          publishCartesianSample(ee_sample, car_state_list.front(), 2);
+          ++collision_rejections;
+          continue;
+        }
+
+        // The arm must also be able to enter and leave this posture.  A
+        // posture that is safe at every base pose is insufficient if the
+        // joint-space transition itself crosses a self-collision.
+        bool transition_safe = true;
+        const int transition_steps = 32;
+        for (size_t i = 0; i < car_state_list_check.size() && transition_safe; ++i) {
+          for (int step = 1; step < transition_steps; ++step) {
+            const double alpha = static_cast<double>(step) / transition_steps;
+            Eigen::VectorXd q = (1.0 - alpha) * start_state + alpha * shared_posture;
+            int collision_type = -1;
+            ++collision_check_calls_;
+            if (mm_config_->checkcollision(car_state_list_check[i], q, false, collision_type)) {
+              transition_safe = false;
+              break;
+            }
+          }
+        }
+        if (!transition_safe) {
+          publishCartesianSample(ee_sample, car_state_list.front(), 2);
+          ++collision_rejections;
+          continue;
+        }
+        // Keep enough waypoints for the optimizer to respect the narrow
+        // collision-free corridor instead of interpolating a large jump in
+        // joint space between only five points.
+        const size_t path_count = std::min<size_t>(25, car_state_list.size());
+        std::vector<Eigen::VectorXd> path;
+        std::vector<double> yaws;
+        path.reserve(path_count);
+        yaws.reserve(path_count);
+        for (size_t k = 0; k < path_count; ++k) {
+          const size_t arm_in = std::max<size_t>(1, path_count / 4);
+          const size_t arm_out = arm_in;
+          size_t index = 0;
+          Eigen::VectorXd arm_posture = shared_posture;
+          if (k < arm_in) {
+            const double alpha = static_cast<double>(k) / arm_in;
+            arm_posture = (1.0 - alpha) * start_state + alpha * shared_posture;
+          } else if (k + arm_out >= path_count) {
+            const size_t step = path_count - 1 - k;
+            const double alpha = static_cast<double>(step) / arm_out;
+            // A 2D navigation goal does not request a new arm pose. Keep the
+            // collision-free folded posture at the goal instead of forcing a
+            // self-colliding terminal transition.
+            arm_posture = shared_posture;
+            index = car_state_list.size() - 1;
+          } else {
+            const size_t middle_count = path_count - arm_in - arm_out;
+            const size_t middle_step = k - arm_in;
+            index = middle_count <= 1 ? 0 :
+                middle_step * (car_state_list.size() - 1) / (middle_count - 1);
+          }
+          Eigen::VectorXd full_state(traj_dim_);
+          full_state.head(mobile_base_dof_) = car_state_list[index].head(mobile_base_dof_);
+          full_state.tail(manipulator_dof_) = arm_posture;
+          path.push_back(full_state);
+          yaws.push_back(car_state_list[index](2));
+        }
+        simple_path_container.push_back(path);
+        yaw_list_container.push_back(yaws);
+        singul_container_new.push_back(singul_container.front());
+        Eigen::VectorXd times(path.size() > 1 ? path.size() - 1 : 1);
+        const double total_time = std::accumulate(t_list.begin(), t_list.end(), 0.0);
+        times.setConstant(path.size() > 1 ? total_time / (path.size() - 1) : total_time);
+        t_list_container.push_back(times);
+        ROS_WARN("[SampleMani] Cartesian IK posture accepted after %d attempts (ik_failures=%d collision_rejections=%d)",
+                 attempt + 1, ik_failures, collision_rejections);
+        publishCartesianSample(ee_sample, car_state_list.front(), 1);
+        return true;
+      }
+      ROS_WARN("[SampleMani] Cartesian IK sampling exhausted: attempts=%d ik_failures=%d collision_rejections=%d",
+               kCartesianIkAttempts, ik_failures, collision_rejections);
+    }
+
     // A navigation goal does not change the requested arm posture.  Avoid
     // launching the expensive joint-space RRT when the arm can remain still;
     // retain the same collision checker along every mobile-base sample.
     const double stationary_arm_delta = (start_state - end_state).lpNorm<Eigen::Infinity>();
-    if (stationary_arm_delta < 1.0e-6 &&
+    if (enable_shared_posture_fast_path_ && stationary_arm_delta < 1.0e-6 &&
         !car_state_list.empty()) {
       // The stationary-arm branch does not call init(), so publish a valid
       // layer count for profiling instead of the uninitialized member value.
@@ -497,6 +677,8 @@ struct ScopedSampleTiming {
     start_node = new ManiPathNode(manipulator_dof_);
     start_node->index = 0;
     start_node->state = start_state;
+    sample_start_state_ = start_state;
+    sample_goal_state_ = end_state;
     start_node->node_state = ManiPathNode::NODE_STATE::IN_TREE;
     start_node->g_score = 0.0;
     // std::cout << "test: " << node_pool_.begin()->second->index << std::endl;
@@ -759,11 +941,16 @@ struct ScopedSampleTiming {
     node->state = s;
     
     ++collision_check_calls_;
-    // Use the safety margin here so the minimum-snap seed produced from this
-    // path keeps enough clearance after re-timing/reshaping.
-    if(mm_config_->checkManicollision(car_state_list_[node->index], node->state, false))
+    // IK success only proves reachability.  Every layer node must pass the
+    // complete coupled collision gate, including base-cloud, arm-cloud,
+    // arm-base, and arm-arm checks, before it can enter either RRT tree.
+    int collision_type = -1;
+    if(mm_config_->checkcollision(car_state_list_[node->index], node->state,
+                                  false, collision_type))
     {
       node->node_state = ManiPathNode::NODE_STATE::COLLISION;
+      ROS_DEBUG("[SampleMani] reject IK node: layer=%d collision_type=%d",
+                node->index, collision_type);
     }
     node_pool_.insert(std::make_pair(key, node));
     return node;
@@ -771,6 +958,7 @@ struct ScopedSampleTiming {
 
   ManiPathNodePtr SampleMani::getSampleNode(){
     std::uniform_int_distribution<int> node_dis(1, max_index_-2);
+    std::uniform_real_distribution<double> unit_dis(0.0, 1.0);
     std::vector<std::uniform_real_distribution<double>> state_dis_vec;
     state_dis_vec.reserve(manipulator_dof_);
     for(int i = 0; i < manipulator_dof_; ++i){
@@ -790,9 +978,77 @@ struct ScopedSampleTiming {
       ++count;
       
       sample_idx = node_dis(node_gen_);
-      for(int i = 0; i < manipulator_dof_; ++i)
-      {
-        sample_state(i) = state_dis_vec[i](state_gen_);
+      // For the locomotive scene, sample a Cartesian end-effector target at
+      // this trajectory layer and convert it through IK before inserting the
+      // node.  The node is still passed through initNode(), which performs
+      // the layer-specific collision check; failed IK/collision candidates
+      // are simply resampled.
+      if (mm_config_ && mm_config_->usesUrdfCollisionMesh()) {
+        std::uniform_real_distribution<double> ux(-0.32, 0.32);
+        std::uniform_real_distribution<double> uy(-0.24, 0.24);
+        std::uniform_real_distribution<double> uz(1.15, 1.80);
+        std::uniform_real_distribution<double> da(-1.20, 1.20);
+        Eigen::Vector3d center(0.0, 0.0, 0.75);
+        const double layer_ratio = static_cast<double>(sample_idx) /
+                                   std::max(1, max_index_ - 1);
+        Eigen::VectorXd ik_seed = sample_start_state_.size() == manipulator_dof_
+            ? (1.0 - layer_ratio) * sample_start_state_ +
+              layer_ratio * sample_goal_state_
+            : sample_state;
+        // Anchor IK at a posture that is actually free at this layer in the
+        // loaded PCD map.  Start/goal interpolation can be colliding and can
+        // force the solver onto an unusable branch.
+        Eigen::VectorXd free_seed;
+        if (mm_config_->sampleFeasibleManiState(car_state_list_[sample_idx], free_seed, 24))
+          ik_seed = free_seed;
+        Eigen::Matrix3d rotation = Eigen::Matrix3d::Identity();
+        std::vector<Eigen::Matrix4d> seed_tf;
+        if (ik_seed.size() == manipulator_dof_ &&
+            mm_config_->getUrdfLinkTransforms(ik_seed, seed_tf) &&
+            !seed_tf.empty()) {
+          center = seed_tf.back().block<3, 1>(0, 3);
+          rotation = seed_tf.back().block<3, 3>(0, 0);
+          center.z() = std::min(center.z(), 0.75);
+        }
+        Eigen::Vector3d target(center.x() + ux(state_gen_),
+                               center.y() + uy(state_gen_), uz(state_gen_));
+        Eigen::Matrix3d target_rotation =
+            rotation * Eigen::AngleAxisd(da(state_gen_), Eigen::Vector3d::UnitZ()).toRotationMatrix() *
+            Eigen::AngleAxisd(0.5 * da(state_gen_), Eigen::Vector3d::UnitY()).toRotationMatrix() *
+            Eigen::AngleAxisd(0.5 * da(state_gen_), Eigen::Vector3d::UnitX()).toRotationMatrix();
+        Eigen::VectorXd ik_state;
+        if (!mm_config_->solveEndEffectorIK(target, target_rotation,
+                                             ik_seed, ik_state)) {
+          publishCartesianSample(target, car_state_list_[sample_idx], 0);
+          continue;
+        }
+        sample_state = ik_state;
+        sample_node = initNode(sample_idx, sample_state);
+        if (sample_node->node_state == ManiPathNode::NODE_STATE::COLLISION) {
+          publishCartesianSample(target, car_state_list_[sample_idx], 2);
+          continue;
+        }
+        publishCartesianSample(target, car_state_list_[sample_idx], 1);
+        break;
+      }
+      const double layer_ratio = static_cast<double>(sample_idx) /
+                                 std::max(1, max_index_ - 1);
+      const bool have_reference = sample_start_state_.size() == manipulator_dof_ &&
+                                  sample_goal_state_.size() == manipulator_dof_;
+      const double draw = unit_dis(state_gen_);
+      if (have_reference && draw < guided_sample_rate_ + local_sample_rate_) {
+        Eigen::VectorXd reference = (1.0 - layer_ratio) * sample_start_state_ +
+                                    layer_ratio * sample_goal_state_;
+        const bool local = draw >= guided_sample_rate_;
+        std::normal_distribution<double> noise(0.0, local_sample_std_);
+        for(int i = 0; i < manipulator_dof_; ++i) {
+          sample_state(i) = reference(i) + (local ? noise(state_gen_) : 0.0);
+          sample_state(i) = std::max(min_joint_pos_(i),
+                             std::min(max_joint_pos_(i), sample_state(i)));
+        }
+      } else {
+        for(int i = 0; i < manipulator_dof_; ++i)
+          sample_state(i) = state_dis_vec[i](state_gen_);
       }
       sample_node = initNode(sample_idx, sample_state);
       if(sample_node->node_state == ManiPathNode::NODE_STATE::COLLISION)
@@ -1352,6 +1608,8 @@ struct ScopedSampleTiming {
 
   void SampleMani::setParam(ros::NodeHandle& nh, const std::shared_ptr<remani_planner::MMConfig> &mm_config){
     mm_config_ = mm_config;
+    cartesian_sample_marker_pub_ = nh.advertise<visualization_msgs::Marker>(
+        "/remani_planner/cartesian_ik_samples", 200);
     manipulator_link_pts_ = mm_config_->getLinkPoint();
     rrt_plan_.reset(new remani_planner::RrtPlanning);
     rrt_plan_->setParam(nh, mm_config);
@@ -1377,7 +1635,15 @@ struct ScopedSampleTiming {
     nh.param("mm/manipulator_max_acc", max_joint_acc_, -1.0);
     nh.param("search/check_num", check_num_, -1);
     nh.param("search/goal_rate", goal_rate_, 0.4);
+    nh.param("search/guided_sample_rate", guided_sample_rate_, 0.5);
+    nh.param("search/local_sample_rate", local_sample_rate_, 0.35);
+    nh.param("search/local_sample_std", local_sample_std_, 0.35);
+    guided_sample_rate_ = std::max(0.0, std::min(1.0, guided_sample_rate_));
+    local_sample_rate_ = std::max(0.0, std::min(1.0 - guided_sample_rate_, local_sample_rate_));
+    local_sample_std_ = std::max(1.0e-3, local_sample_std_);
     nh.param("search/max_loop_num", max_loop_num_, 500);
+    nh.param("search/enable_shared_posture_fast_path",
+             enable_shared_posture_fast_path_, true);
     nh.param("search/enable_mani_oneshot", enable_mani_oneshot_, true);
     nh.param("search/max_oneshot_calls", max_oneshot_calls_, 0);
     nh.param("search/oneshot_stride", oneshot_stride_, 1);

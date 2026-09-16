@@ -1,0 +1,6 @@
+# Saved from the RViz 2D Nav Goal sent during the PCD demo.
+# Coordinates are in the world frame; yaw is in radians.
+frame_id: world
+x: 2.878
+y: -3.411
+yaw: -1.591

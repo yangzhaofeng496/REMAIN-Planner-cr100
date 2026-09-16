@@ -1185,6 +1185,33 @@ bool MMConfig::sampleFeasibleManiState(const Eigen::Vector3d &car_state,
     return found;
 }
 
+bool MMConfig::solveEndEffectorIK(const Eigen::Vector3d &target_position,
+                                  const Eigen::Matrix3d &target_rotation,
+                                  const Eigen::VectorXd &seed,
+                                  Eigen::VectorXd &solution) const {
+    if (!urdf_fk_ready_ || !urdf_fk_solver_ || seed.size() != manipulator_dof_)
+        return false;
+    KDL::JntArray q_min(manipulator_dof_), q_max(manipulator_dof_), q_seed(manipulator_dof_), q_out(manipulator_dof_);
+    for (int i = 0; i < manipulator_dof_; ++i) {
+        q_min(i) = manipulator_min_pos_(i);
+        q_max(i) = manipulator_max_pos_(i);
+        q_seed(i) = seed(i);
+    }
+    KDL::Rotation rotation(
+        target_rotation(0,0), target_rotation(0,1), target_rotation(0,2),
+        target_rotation(1,0), target_rotation(1,1), target_rotation(1,2),
+        target_rotation(2,0), target_rotation(2,1), target_rotation(2,2));
+    KDL::Frame target(rotation, KDL::Vector(target_position.x(), target_position.y(), target_position.z()));
+    KDL::ChainIkSolverVel_pinv vel_solver(urdf_chain_);
+    KDL::ChainIkSolverPos_NR_JL solver(urdf_chain_, q_min, q_max, *urdf_fk_solver_, vel_solver, 120, 1e-4);
+    if (solver.CartToJnt(q_seed, target, q_out) < 0)
+        return false;
+    solution.resize(manipulator_dof_);
+    for (int i = 0; i < manipulator_dof_; ++i)
+        solution(i) = q_out(i);
+    return true;
+}
+
 double MMConfig::urdfManiObstacleCost(const Eigen::Vector3d &car_state,
                                       const Eigen::VectorXd &mani_state,
                                       bool safe) const {

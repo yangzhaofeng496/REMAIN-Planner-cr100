@@ -384,6 +384,17 @@ namespace remani_planner
     collision_type_pub_.publish(msg);
     if (coll && coll_type != last_collision_type_){
       ROS_WARN("[CollisionWatch] COLLISION type=%d (0 car-env, 1 arm-env, 2 arm-car, 3 arm-arm)", coll_type);
+      ROS_WARN_STREAM("[CollisionWatch] actual car=(" << car_state.transpose()
+                      << ") arm=" << mani_state.transpose());
+      SingulTrajData *traj = &planner_manager_->traj_container_.singul_traj_data;
+      if (traj->traj_id > 0) {
+        const double t = std::max(0.0, ros::Time::now().toSec() - traj->start_time);
+        const Eigen::VectorXd planned = traj->getPos(std::min(t, traj->duration));
+        ROS_WARN_STREAM("[CollisionWatch] planned t=" << t
+                        << " car=(" << planned.head(3).transpose()
+                        << ") arm=" << planned.tail(manipulator_dim_).transpose()
+                        << " state_error=" << (mani_state - planned.tail(manipulator_dim_)).norm());
+      }
     } else if (!coll && last_collision_type_ != -1){
       ROS_INFO("[CollisionWatch] clear");
     }

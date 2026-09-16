@@ -3,8 +3,8 @@
 
 Optional processing is applied in this order:
 
-1. voxel downsampling (``~voxel_leaf_size``, 0 disables it);
-2. rigid transform into ``world`` (``~T_world_cloud``, identity by default).
+1. rigid transform into ``world`` (``~T_world_cloud``, identity by default);
+2. optional display-only voxel downsampling (``~display_voxel_leaf_size``).
 
 The transform maps the PCD's own frame onto ``world``; the PCD file itself is
 never rewritten.
@@ -160,15 +160,16 @@ def main():
     path = rospy.get_param("~pcd_file")
     frame = rospy.get_param("~frame_id", DEFAULT_FRAME)
     topic = rospy.get_param("~topic", "/map_generator/global_cloud")
+    display_topic = rospy.get_param("~display_topic", "")
     rate_hz = rospy.get_param("~rate", 1.0)
-    leaf_size = float(rospy.get_param("~voxel_leaf_size", 0.0))
+    display_leaf_size = float(rospy.get_param("~display_voxel_leaf_size", 0.0))
     pose_topic = rospy.get_param("~pose_topic", "/initialpose")
     translation = _vector_param(rospy, "~T_world_cloud/translation", [0.0, 0.0, 0.0])
     rpy = _vector_param(rospy, "~T_world_cloud/rpy", [0.0, 0.0, 0.0])
 
     points = load_xyz_points(path)
     raw_count = len(points)
-    points = voxel_downsample(points, leaf_size)
+    points = list(points)
     points = apply_transform(points, translation, rpy)
     anchor = placement_anchor(points)
 
@@ -186,6 +187,8 @@ def main():
               PointField("y", 4, PointField.FLOAT32, 1),
               PointField("z", 8, PointField.FLOAT32, 1)]
     publisher = rospy.Publisher(topic, PointCloud2, queue_size=1, latch=True)
+    display_publisher = (rospy.Publisher(display_topic, PointCloud2, queue_size=1, latch=True)
+                         if display_topic else None)
     from geometry_msgs.msg import PoseStamped
     pose_publisher = rospy.Publisher("~current_pose", PoseStamped, queue_size=1, latch=True)
     lock = threading.Lock()
@@ -200,7 +203,7 @@ def main():
         message.pose.orientation.w = math.cos(0.5 * yaw)
         pose_publisher.publish(message)
 
-    def publish_points(current):
+    def publish_points(current, target_publisher):
         payload = b"".join(struct.pack("<fff", *point) for point in current)
         message = PointCloud2(height=1, width=len(current), fields=fields,
                               is_bigendian=False, point_step=12,
@@ -208,7 +211,12 @@ def main():
                               is_dense=True)
         message.header.frame_id = frame
         message.header.stamp = rospy.Time.now()
-        publisher.publish(message)
+        target_publisher.publish(message)
+
+    def publish_all(current):
+        publish_points(current, publisher)
+        if display_publisher is not None:
+            publish_points(voxel_downsample(current, display_leaf_size), display_publisher)
 
     def on_pose(msg):
         pose = msg.pose.pose
@@ -218,7 +226,7 @@ def main():
         placed = place_points(points, anchor, position, yaw)
         with lock:
             state["points"] = placed
-        publish_points(placed)
+        publish_all(placed)
         publish_pose(position, yaw)
         rospy.loginfo("Re-placed cloud at [%.2f %.2f %.2f] yaw=%.2f",
                       position[0], position[1], position[2], yaw)
@@ -228,16 +236,19 @@ def main():
         rospy.Subscriber(pose_topic, PoseWithCovarianceStamped, on_pose)
 
     publish_pose(initial_position, initial_yaw)
-    rospy.loginfo("Loaded %d points from %s; voxel_leaf_size=%.3f kept %d points; "
+    rospy.loginfo("Loaded %d points from %s; planner_points=%d; display_topic=%s "
+                  "display_voxel_leaf_size=%.3f display_points=%d; "
                   "T_world_cloud translation=%s rpy=%s anchor=%s initial_pose=%s; "
                   "publishing %s in frame %s; interactive pose topic %s",
-                  raw_count, path, leaf_size, len(points), translation, rpy, anchor,
-                  list(initial_position) + [initial_yaw], topic, frame,
+                  raw_count, path, len(points), display_topic or "<disabled>",
+                  display_leaf_size,
+                  len(voxel_downsample(points, display_leaf_size)), translation, rpy,
+                  anchor, list(initial_position) + [initial_yaw], topic, frame,
                   pose_topic or "<disabled>")
     while not rospy.is_shutdown():
         with lock:
             current = state["points"]
-        publish_points(current)
+        publish_all(current)
         rospy.sleep(1.0 / max(rate_hz, 0.01))
 
 

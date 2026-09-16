@@ -17,8 +17,27 @@
 #include "mm_config/mm_config.hpp"
 #include "path_searching/rrt.h"
 #include <fstream>
+#include <visualization_msgs/MarkerArray.h>
 
 namespace mani_sample {
+
+  // One accepted arm configuration attached to a specific mobile-base
+  // trajectory layer.  layer indexes car_state_list_; ee_world is the
+  // Cartesian end-effector sample (world frame) that produced it through IK.
+  struct LayeredManiWaypoint {
+    int layer{0};
+    Eigen::Vector3d ee_world{Eigen::Vector3d::Zero()};
+    Eigen::VectorXd joint_state;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  };
+
+  // Pure linear interpolation between two joint configurations.  Always
+  // includes both endpoints, returns exactly `samples` configurations, and
+  // rejects mismatched dimensions or fewer than two requested samples.
+  bool interpolateJointSegment(const Eigen::VectorXd &q0,
+                               const Eigen::VectorXd &q1,
+                               int samples,
+                               std::vector<Eigen::VectorXd> &out);
 
   class ManiPathNode{
     public:
@@ -74,6 +93,10 @@ namespace mani_sample {
     int tree_count_, anti_tree_count_;
     int check_num_;
     double goal_rate_;
+    double guided_sample_rate_{0.5};
+    double local_sample_rate_{0.35};
+    double local_sample_std_{0.35};
+    Eigen::VectorXd sample_start_state_, sample_goal_state_;
     int max_loop_num_;
     bool enable_mani_oneshot_{true};
     int max_oneshot_calls_{0};
@@ -81,6 +104,10 @@ namespace mani_sample {
     int oneshot_max_jump_layers_{0}; // <=0 preserves unlimited ancestor search
     int oneshot_calls_{0};
     double max_mani_search_time_;
+    // When enabled, allow the legacy single-posture shortcut.  The
+    // locomotive PCD scene disables it so every base trajectory layer gets
+    // its own IK candidates and inter-layer connections.
+    bool enable_shared_posture_fast_path_{true};
     size_t collision_check_calls_{0};
     size_t edge_interpolation_checks_{0};
     size_t nodes_created_{0};
@@ -90,6 +117,8 @@ namespace mani_sample {
     std::mt19937 goal_gen_;
     std::mt19937 state_gen_;
     std::mt19937 node_gen_;
+    ros::Publisher cartesian_sample_marker_pub_;
+    int cartesian_marker_id_{0};
 
     bool checkcollision(const ManiPathNodePtr& cur_state, const ManiPathNodePtr& next_state);
     int doubleIdx2int(double idx);
@@ -113,6 +142,9 @@ namespace mani_sample {
     void organizeTree();
     void organizeTree(ManiPathNodePtr &q);
     void clearSubTree(ManiPathNodePtr &q);
+    void publishCartesianSample(const Eigen::Vector3d &p_base,
+                                const Eigen::Vector3d &car_state,
+                                int status);
     void mergeTrees(const ManiPathNodePtr &q1, const ManiPathNodePtr &q2);
     bool fullStateRepair();
 
