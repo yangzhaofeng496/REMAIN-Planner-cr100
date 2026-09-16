@@ -68,4 +68,10 @@ if(CATKIN_ENABLE_TESTING)
     target_link_libraries(ik_candidate_acceptance_test path_searching
       ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OMPL_LIBRARIES})
   endif()
+
+  catkin_add_gtest(layer_candidate_generation_test test/layer_candidate_generation_test.cpp)
+  if(TARGET layer_candidate_generation_test)
+    target_link_libraries(layer_candidate_generation_test path_searching
+      ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OMPL_LIBRARIES})
+  endif()
 endif()

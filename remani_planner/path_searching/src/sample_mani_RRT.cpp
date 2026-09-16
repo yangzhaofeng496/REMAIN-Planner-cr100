@@ -69,6 +69,138 @@ struct ScopedSampleTiming {
     return true;
   }
 
+  bool sampleLayerIkCandidates(const Eigen::Vector3d &center,
+                               const Eigen::Matrix3d &rotation,
+                               const Eigen::VectorXd &ik_seed,
+                               int manipulator_dof,
+                               const Eigen::VectorXd &min_joint,
+                               const Eigen::VectorXd &max_joint,
+                               int samples_per_layer,
+                               double radius_xy,
+                               double z_min,
+                               double z_max,
+                               uint32_t rng_seed,
+                               const ManiIkFn &ik,
+                               std::vector<LayerIkCandidate> &out,
+                               LayerIkStats &stats) {
+    out.clear();
+    stats = LayerIkStats();
+    if (manipulator_dof <= 0 || samples_per_layer <= 0 ||
+        min_joint.size() != manipulator_dof || max_joint.size() != manipulator_dof) {
+      return false;
+    }
+    if (z_max < z_min) std::swap(z_min, z_max);
+    if (radius_xy < 0.0) radius_xy = 0.0;
+
+    std::mt19937 rng(rng_seed);
+    std::uniform_real_distribution<double> uxy(-radius_xy, radius_xy);
+    std::uniform_real_distribution<double> uz(z_min, z_max);
+    std::uniform_real_distribution<double> da(-1.20, 1.20);
+
+    for (int attempt = 0; attempt < samples_per_layer; ++attempt) {
+      Eigen::Vector3d target(center.x() + uxy(rng), center.y() + uxy(rng), uz(rng));
+      Eigen::Matrix3d target_rotation =
+          rotation *
+          Eigen::AngleAxisd(da(rng), Eigen::Vector3d::UnitZ()).toRotationMatrix() *
+          Eigen::AngleAxisd(0.5 * da(rng), Eigen::Vector3d::UnitY()).toRotationMatrix() *
+          Eigen::AngleAxisd(0.5 * da(rng), Eigen::Vector3d::UnitX()).toRotationMatrix();
+      Eigen::VectorXd solution;
+      if (!ik(target, target_rotation, ik_seed, solution)) {
+        ++stats.ik_failure;
+        continue;
+      }
+      if (solution.size() != manipulator_dof) {
+        ++stats.ik_failure;
+        continue;
+      }
+      ++stats.ik_success;
+      bool within_limits = true;
+      for (int j = 0; j < manipulator_dof; ++j) {
+        if (solution(j) < min_joint(j) - 1.0e-9 ||
+            solution(j) > max_joint(j) + 1.0e-9) {
+          within_limits = false;
+          break;
+        }
+      }
+      if (!within_limits) {
+        ++stats.out_of_limits;
+        continue;
+      }
+      LayerIkCandidate candidate;
+      candidate.ee_position = target;
+      candidate.joint_state = solution;
+      out.push_back(candidate);
+      ++stats.accepted;
+    }
+    return stats.accepted > 0;
+  }
+
+  bool SampleMani::sampleLayerCandidates(int layer, const Eigen::VectorXd &seed,
+                                         std::vector<ManiPathNodePtr> &candidates) {
+    candidates.clear();
+    if (!mm_config_ || layer < 0 || layer >= max_index_ ||
+        seed.size() != manipulator_dof_) {
+      return false;
+    }
+    if (layer_candidates_.size() != static_cast<size_t>(max_index_)) {
+      layer_candidates_.assign(max_index_, std::vector<ManiPathNodePtr>());
+    }
+
+    // Anchor the Cartesian sampling box on the end-effector pose obtained
+    // from the layer-specific joint seed.
+    Eigen::Vector3d center(0.0, 0.0, 0.75);
+    Eigen::Matrix3d rotation = Eigen::Matrix3d::Identity();
+    Eigen::VectorXd ik_seed = seed;
+    Eigen::VectorXd free_seed;
+    if (mm_config_->sampleFeasibleManiState(car_state_list_[layer], free_seed, 24) &&
+        free_seed.size() == manipulator_dof_) {
+      ik_seed = free_seed;
+    }
+    std::vector<Eigen::Matrix4d> seed_tf;
+    if (mm_config_->getUrdfLinkTransforms(ik_seed, seed_tf) && !seed_tf.empty()) {
+      center = seed_tf.back().block<3, 1>(0, 3);
+      rotation = seed_tf.back().block<3, 3>(0, 0);
+      center.z() = std::min(center.z(), 0.75);
+    }
+
+    std::vector<LayerIkCandidate> ik_candidates;
+    LayerIkStats stats;
+    const uint32_t layer_seed =
+        0x5EED0000u ^ static_cast<uint32_t>(layer * 2654435761u);
+    sampleLayerIkCandidates(
+        center, rotation, ik_seed, manipulator_dof_, min_joint_pos_, max_joint_pos_,
+        cartesian_samples_per_layer_, cartesian_sample_radius_xy_,
+        cartesian_sample_z_min_, cartesian_sample_z_max_, layer_seed,
+        [this](const Eigen::Vector3d &p, const Eigen::Matrix3d &r,
+               const Eigen::VectorXd &s, Eigen::VectorXd &out) {
+          return mm_config_->solveEndEffectorIK(p, r, s, out);
+        },
+        ik_candidates, stats);
+
+    const std::array<size_t, 4> collision_before = collision_type_counts_;
+    for (auto &candidate : ik_candidates) {
+      // Every IK solution must pass the single full coupled collision gate.
+      ManiPathNodePtr node = initNode(layer, candidate.joint_state);
+      if (node->node_state == ManiPathNode::NODE_STATE::COLLISION) {
+        publishCartesianSample(candidate.ee_position, car_state_list_[layer], 2);
+        continue;
+      }
+      publishCartesianSample(candidate.ee_position, car_state_list_[layer], 1);
+      candidates.push_back(node);
+    }
+
+    size_t collision_rejections = 0;
+    for (int t = 0; t < 4; ++t) {
+      collision_rejections += collision_type_counts_[t] - collision_before[t];
+    }
+    layer_candidates_[layer] = candidates;
+    ROS_INFO("[SampleMani][layer] layer=%d ik_success=%d ik_failure=%d "
+             "out_of_limits=%d collision_rejections=%zu accepted=%zu",
+             layer, stats.ik_success, stats.ik_failure, stats.out_of_limits,
+             collision_rejections, candidates.size());
+    return !candidates.empty();
+  }
+
   bool SampleMani::sampleManiSearch(const bool astar_succ, const Eigen::VectorXd &start_state, const Eigen::VectorXd &end_state,
                     const std::vector<Eigen::Vector3d> &car_state_list, const std::vector<Eigen::Vector3d> &car_state_list_check, 
                     const std::vector<double> &t_list, const std::vector<int> &singul_container, const int start_singul,// size = t_list.size()
@@ -81,6 +213,7 @@ struct ScopedSampleTiming {
     nodes_created_ = 0;
     collision_type_counts_.fill(0);
     ik_failure_count_ = 0;
+    layer_candidates_.clear();
     simple_path_container.clear();
     singul_container_new.clear();
     yaw_list_container.clear();
@@ -1008,58 +1141,32 @@ struct ScopedSampleTiming {
       ++count;
       
       sample_idx = node_dis(node_gen_);
-      // For the locomotive scene, sample a Cartesian end-effector target at
-      // this trajectory layer and convert it through IK before inserting the
-      // node.  The node is still passed through initNode(), which performs
-      // the layer-specific collision check; failed IK/collision candidates
-      // are simply resampled.
+      // For the locomotive scene the arm candidates for each base trajectory
+      // layer are generated once, in a layer-specific Cartesian box, and each
+      // one is accepted only after the full coupled collision gate.  Reuse
+      // the cached, already-validated candidates instead of re-solving IK on
+      // every RRT iteration.
       if (mm_config_ && mm_config_->usesUrdfCollisionMesh()) {
-        std::uniform_real_distribution<double> ux(-0.32, 0.32);
-        std::uniform_real_distribution<double> uy(-0.24, 0.24);
-        std::uniform_real_distribution<double> uz(1.15, 1.80);
-        std::uniform_real_distribution<double> da(-1.20, 1.20);
-        Eigen::Vector3d center(0.0, 0.0, 0.75);
-        const double layer_ratio = static_cast<double>(sample_idx) /
-                                   std::max(1, max_index_ - 1);
-        Eigen::VectorXd ik_seed = sample_start_state_.size() == manipulator_dof_
-            ? (1.0 - layer_ratio) * sample_start_state_ +
-              layer_ratio * sample_goal_state_
-            : sample_state;
-        // Anchor IK at a posture that is actually free at this layer in the
-        // loaded PCD map.  Start/goal interpolation can be colliding and can
-        // force the solver onto an unusable branch.
-        Eigen::VectorXd free_seed;
-        if (mm_config_->sampleFeasibleManiState(car_state_list_[sample_idx], free_seed, 24))
-          ik_seed = free_seed;
-        Eigen::Matrix3d rotation = Eigen::Matrix3d::Identity();
-        std::vector<Eigen::Matrix4d> seed_tf;
-        if (ik_seed.size() == manipulator_dof_ &&
-            mm_config_->getUrdfLinkTransforms(ik_seed, seed_tf) &&
-            !seed_tf.empty()) {
-          center = seed_tf.back().block<3, 1>(0, 3);
-          rotation = seed_tf.back().block<3, 3>(0, 0);
-          center.z() = std::min(center.z(), 0.75);
+        if (layer_candidates_.size() != static_cast<size_t>(max_index_)) {
+          layer_candidates_.assign(max_index_, std::vector<ManiPathNodePtr>());
         }
-        Eigen::Vector3d target(center.x() + ux(state_gen_),
-                               center.y() + uy(state_gen_), uz(state_gen_));
-        Eigen::Matrix3d target_rotation =
-            rotation * Eigen::AngleAxisd(da(state_gen_), Eigen::Vector3d::UnitZ()).toRotationMatrix() *
-            Eigen::AngleAxisd(0.5 * da(state_gen_), Eigen::Vector3d::UnitY()).toRotationMatrix() *
-            Eigen::AngleAxisd(0.5 * da(state_gen_), Eigen::Vector3d::UnitX()).toRotationMatrix();
-        Eigen::VectorXd ik_state;
-        if (!mm_config_->solveEndEffectorIK(target, target_rotation,
-                                             ik_seed, ik_state)) {
-          ++ik_failure_count_;
-          publishCartesianSample(target, car_state_list_[sample_idx], 0);
+        if (layer_candidates_[sample_idx].empty()) {
+          const double layer_ratio = static_cast<double>(sample_idx) /
+                                     std::max(1, max_index_ - 1);
+          Eigen::VectorXd layer_seed = sample_start_state_.size() == manipulator_dof_ &&
+                                       sample_goal_state_.size() == manipulator_dof_
+              ? (1.0 - layer_ratio) * sample_start_state_ +
+                layer_ratio * sample_goal_state_
+              : sample_state;
+          sampleLayerCandidates(sample_idx, layer_seed, layer_candidates_[sample_idx]);
+        }
+        if (layer_candidates_[sample_idx].empty()) {
           continue;
         }
-        sample_state = ik_state;
-        sample_node = initNode(sample_idx, sample_state);
-        if (sample_node->node_state == ManiPathNode::NODE_STATE::COLLISION) {
-          publishCartesianSample(target, car_state_list_[sample_idx], 2);
-          continue;
-        }
-        publishCartesianSample(target, car_state_list_[sample_idx], 1);
+        std::uniform_int_distribution<size_t> pick(
+            0, layer_candidates_[sample_idx].size() - 1);
+        sample_node = layer_candidates_[sample_idx][pick(state_gen_)];
+        sample_state = sample_node->state;
         break;
       }
       const double layer_ratio = static_cast<double>(sample_idx) /
@@ -1675,6 +1782,16 @@ struct ScopedSampleTiming {
     nh.param("search/max_loop_num", max_loop_num_, 500);
     nh.param("search/enable_shared_posture_fast_path",
              enable_shared_posture_fast_path_, true);
+    nh.param("search/cartesian_samples_per_layer", cartesian_samples_per_layer_, 64);
+    if (cartesian_samples_per_layer_ < 1) cartesian_samples_per_layer_ = 1;
+    nh.param("search/cartesian_sample_radius_xy", cartesian_sample_radius_xy_, 0.32);
+    nh.param("search/cartesian_sample_z_min", cartesian_sample_z_min_, 1.15);
+    nh.param("search/cartesian_sample_z_max", cartesian_sample_z_max_, 1.80);
+    ROS_INFO("[SampleMani layer config] shared_posture=%s samples_per_layer=%d "
+             "radius_xy=%.3f z=[%.3f, %.3f]",
+             enable_shared_posture_fast_path_ ? "true" : "false",
+             cartesian_samples_per_layer_, cartesian_sample_radius_xy_,
+             cartesian_sample_z_min_, cartesian_sample_z_max_);
     nh.param("search/enable_mani_oneshot", enable_mani_oneshot_, true);
     nh.param("search/max_oneshot_calls", max_oneshot_calls_, 0);
     nh.param("search/oneshot_stride", oneshot_stride_, 1);

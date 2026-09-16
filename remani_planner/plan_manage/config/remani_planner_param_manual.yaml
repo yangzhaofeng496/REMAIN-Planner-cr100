@@ -38,8 +38,13 @@ search:
   local_sample_std: 0.35
   max_loop_num: 5000
   # Use per-base-trajectory-layer IK candidates for the locomotive PCD scene.
-  # The legacy shared-posture shortcut is retained only as an opt-in fallback.
+  # The legacy shared-posture and stationary-arm shortcuts are disabled so
+  # every base layer gets its own collision-checked IK candidates.
   enable_shared_posture_fast_path: false
+  cartesian_samples_per_layer: 64
+  cartesian_sample_radius_xy: 0.32
+  cartesian_sample_z_min: 1.15
+  cartesian_sample_z_max: 1.80
   max_sample_time: 0.2
   # The arm must be able to reconfigure while the base crosses the bar.
   # 50 ms was too short for the joint-space RRT to find that coupled path.

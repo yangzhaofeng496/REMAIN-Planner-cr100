@@ -61,6 +61,47 @@ namespace mani_sample {
                          std::array<size_t, 4> *collision_type_counts,
                          size_t *ik_failure_count);
 
+  // Inverse-kinematics solver for a Cartesian end-effector target expressed
+  // in the mobile-base frame.
+  using ManiIkFn = std::function<bool(const Eigen::Vector3d &target_position,
+                                      const Eigen::Matrix3d &target_rotation,
+                                      const Eigen::VectorXd &seed,
+                                      Eigen::VectorXd &solution)>;
+
+  // One IK-converted arm configuration plus the Cartesian sample that
+  // produced it.
+  struct LayerIkCandidate {
+    Eigen::Vector3d ee_position{Eigen::Vector3d::Zero()};
+    Eigen::VectorXd joint_state;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  };
+
+  struct LayerIkStats {
+    int ik_success{0};
+    int ik_failure{0};
+    int out_of_limits{0};
+    int accepted{0};
+  };
+
+  // Deterministically sample `samples_per_layer` Cartesian end-effector
+  // targets around `center` inside an axis-aligned box, convert each through
+  // IK and keep the solutions inside the joint limits.  No ROS dependency
+  // beyond Eigen, so it is unit-testable.
+  bool sampleLayerIkCandidates(const Eigen::Vector3d &center,
+                               const Eigen::Matrix3d &rotation,
+                               const Eigen::VectorXd &ik_seed,
+                               int manipulator_dof,
+                               const Eigen::VectorXd &min_joint,
+                               const Eigen::VectorXd &max_joint,
+                               int samples_per_layer,
+                               double radius_xy,
+                               double z_min,
+                               double z_max,
+                               uint32_t rng_seed,
+                               const ManiIkFn &ik,
+                               std::vector<LayerIkCandidate> &out,
+                               LayerIkStats &stats);
+
   class ManiPathNode{
     public:
     enum NODE_STATE
@@ -130,6 +171,15 @@ namespace mani_sample {
     // locomotive PCD scene disables it so every base trajectory layer gets
     // its own IK candidates and inter-layer connections.
     bool enable_shared_posture_fast_path_{true};
+    // Per-layer Cartesian IK candidate sampling parameters for the fixed
+    // locomotive scene.
+    int cartesian_samples_per_layer_{64};
+    double cartesian_sample_radius_xy_{0.32};
+    double cartesian_sample_z_min_{1.15};
+    double cartesian_sample_z_max_{1.80};
+    // Candidates accepted per base trajectory layer (indexed like
+    // car_state_list_).  Filled lazily by sampleLayerCandidates().
+    std::vector<std::vector<ManiPathNodePtr>> layer_candidates_;
     size_t collision_check_calls_{0};
     size_t edge_interpolation_checks_{0};
     size_t nodes_created_{0};
@@ -175,6 +225,13 @@ namespace mani_sample {
     bool fullStateRepair();
 
     public:
+    // Sample Cartesian end-effector targets for a base trajectory layer,
+    // convert them through IK and accept each solution only after the full
+    // coupled collision gate in initNode().  Accepted nodes are appended to
+    // `candidates` and cached in layer_candidates_[layer].  Returns true when
+    // at least one candidate is collision free.
+    bool sampleLayerCandidates(int layer, const Eigen::VectorXd &seed,
+                               std::vector<ManiPathNodePtr> &candidates);
     remani_planner::RrtPlanning::Ptr rrt_plan_;
     std::shared_ptr<remani_planner::MMConfig> mm_config_;
     SampleMani():
