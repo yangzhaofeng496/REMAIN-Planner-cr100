@@ -135,6 +135,48 @@ struct ScopedSampleTiming {
     return stats.accepted > 0;
   }
 
+  bool checkJointTransition(const Eigen::VectorXd &q_from,
+                            const Eigen::VectorXd &q_to,
+                            double duration,
+                            double max_joint_vel,
+                            int min_samples,
+                            const ManiBasePoseFn &base_pose_at,
+                            const ManiCollisionFn &collision,
+                            int &collision_type) {
+    collision_type = -1;
+    if (q_from.size() == 0 || q_from.size() != q_to.size() ||
+        duration <= 0.0 || max_joint_vel <= 0.0) {
+      return false;
+    }
+    if (min_samples < 2) min_samples = 2;
+
+    const Eigen::VectorXd dq = q_to - q_from;
+    const double max_dq = dq.lpNorm<Eigen::Infinity>();
+    // Reject transitions that exceed the joint velocity limit over the
+    // available transition time.
+    if (max_dq > max_joint_vel * duration * (1.0 + 1.0e-6)) {
+      return false;
+    }
+    // Density: at least min_samples, more when the displacement per sample
+    // would otherwise exceed the velocity limit derived step.
+    int samples = min_samples;
+    const double allowed_per_step = max_joint_vel * duration;
+    if (allowed_per_step > 1.0e-9) {
+      const double needed = std::ceil(max_dq * min_samples / allowed_per_step);
+      if (needed > samples) samples = static_cast<int>(needed);
+    }
+
+    for (int i = 1; i < samples; ++i) {
+      const double fraction = static_cast<double>(i) / static_cast<double>(samples);
+      const Eigen::VectorXd q = (1.0 - fraction) * q_from + fraction * q_to;
+      const Eigen::Vector3d base_pose = base_pose_at(fraction);
+      if (collision(base_pose, q, collision_type)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   bool SampleMani::sampleLayerCandidates(int layer, const Eigen::VectorXd &seed,
                                          std::vector<ManiPathNodePtr> &candidates) {
     candidates.clear();
@@ -199,6 +241,124 @@ struct ScopedSampleTiming {
              layer, stats.ik_success, stats.ik_failure, stats.out_of_limits,
              collision_rejections, candidates.size());
     return !candidates.empty();
+  }
+
+  bool SampleMani::connectLayerCandidates(int layer, const ManiPathNodePtr &from,
+                                          const ManiPathNodePtr &to) {
+    if (!mm_config_ || from == nullptr || to == nullptr) return false;
+    if (to->index != layer || from->index >= to->index) return false;
+    if (from->node_state == ManiPathNode::NODE_STATE::COLLISION ||
+        to->node_state == ManiPathNode::NODE_STATE::COLLISION) {
+      return false;
+    }
+    if (from->state.size() != manipulator_dof_ ||
+        to->state.size() != manipulator_dof_) {
+      return false;
+    }
+    if (layer < 0 || layer >= max_index_) return false;
+    if (layer_candidates_.size() != static_cast<size_t>(max_index_)) return false;
+
+    double duration = 0.0;
+    for (int i = from->index; i < to->index; ++i) {
+      duration += t_list_[i];
+    }
+    if (duration <= 0.0) return false;
+
+    const int base_index = from->index;
+    const int layer_span = to->index - from->index;
+    ManiBasePoseFn base_pose_at = [this, base_index, layer_span](double fraction) -> Eigen::Vector3d {
+      const double seg = base_index + fraction * layer_span;
+      const int dense = static_cast<int>(std::lround(seg * check_num_));
+      if (dense >= 0 && dense < static_cast<int>(car_state_list_check_.size())) {
+        return car_state_list_check_[dense];
+      }
+      const double clamped = std::max(0.0, std::min(1.0, fraction));
+      return (1.0 - clamped) * car_state_list_[base_index] +
+             clamped * car_state_list_[base_index + layer_span];
+    };
+    ManiCollisionFn collision = [this](const Eigen::Vector3d &car_state,
+                                       const Eigen::VectorXd &joint_state,
+                                       int &type) {
+      ++collision_check_calls_;
+      return mm_config_->checkcollision(car_state, joint_state, false, type);
+    };
+    int collision_type = -1;
+    return checkJointTransition(from->state, to->state, duration, max_joint_vel_,
+                                std::max(2, check_num_), base_pose_at, collision,
+                                collision_type);
+  }
+
+  bool SampleMani::buildLayeredJointPath(const Eigen::VectorXd &start_state,
+                                         const Eigen::VectorXd &end_state,
+                                         std::vector<Eigen::VectorXd> &path,
+                                         std::vector<double> &yaw_list) {
+    path.clear();
+    yaw_list.clear();
+    if (max_index_ < 1) return false;
+    if (layer_candidates_.size() != static_cast<size_t>(max_index_)) {
+      layer_candidates_.assign(max_index_, std::vector<ManiPathNodePtr>());
+    }
+
+    ManiPathNodePtr prev = initNode(0, start_state);
+    if (prev->node_state == ManiPathNode::NODE_STATE::COLLISION) {
+      ROS_WARN("[SampleMani][layer] start layer candidate is in collision");
+      return false;
+    }
+    std::vector<ManiPathNodePtr> chain;
+    chain.push_back(prev);
+
+    for (int layer = 1; layer < max_index_; ++layer) {
+      const double ratio = static_cast<double>(layer) /
+                           std::max(1, max_index_ - 1);
+      const Eigen::VectorXd seed =
+          (layer == max_index_ - 1)
+              ? end_state
+              : (1.0 - ratio) * start_state + ratio * end_state;
+      if (layer_candidates_[layer].empty()) {
+        sampleLayerCandidates(layer, seed, layer_candidates_[layer]);
+      }
+      if (layer == max_index_ - 1) {
+        ManiPathNodePtr end_node = initNode(layer, end_state);
+        if (end_node->node_state != ManiPathNode::NODE_STATE::COLLISION) {
+          bool present = false;
+          for (const auto &c : layer_candidates_[layer]) {
+            if (c == end_node) { present = true; break; }
+          }
+          if (!present) layer_candidates_[layer].push_back(end_node);
+        }
+      }
+      ManiPathNodePtr chosen = nullptr;
+      double best_distance = 1.0e9;
+      for (const auto &candidate : layer_candidates_[layer]) {
+        if (!connectLayerCandidates(layer, prev, candidate)) continue;
+        const double distance = (candidate->state - prev->state).lpNorm<1>();
+        if (distance < best_distance) {
+          best_distance = distance;
+          chosen = candidate;
+        }
+      }
+      if (chosen == nullptr) {
+        ROS_WARN("[SampleMani][layer] no connectable candidate at layer=%d "
+                 "(prev_layer=%d candidates=%zu)",
+                 layer, prev->index, layer_candidates_[layer].size());
+        return false;
+      }
+      prev = chosen;
+      chain.push_back(chosen);
+    }
+
+    path.reserve(chain.size());
+    yaw_list.reserve(chain.size());
+    for (const auto &node : chain) {
+      Eigen::VectorXd full_state(traj_dim_);
+      full_state.head(mobile_base_dof_) =
+          car_state_list_[node->index].head(mobile_base_dof_);
+      full_state.tail(manipulator_dof_) = node->state;
+      path.push_back(full_state);
+      yaw_list.push_back(car_state_list_[node->index](2));
+    }
+    ROS_INFO("[SampleMani][layer] layered path accepted: layers=%zu", chain.size());
+    return true;
   }
 
   bool SampleMani::sampleManiSearch(const bool astar_succ, const Eigen::VectorXd &start_state, const Eigen::VectorXd &end_state,
@@ -427,6 +587,41 @@ struct ScopedSampleTiming {
     std::vector<Eigen::VectorXd> mani_path;
     Eigen::VectorXd state_full(traj_dim_);
     init(car_state_list, car_state_list_check, t_list);
+
+    // Preferred locomotive route: build the coupled path layer by layer from
+    // collision-checked Cartesian IK candidates and connect adjacent layers
+    // with fully validated joint interpolation.  When no layered connection
+    // exists, fall back to the joint-space RRT below.
+    if (astar_succ && !enable_shared_posture_fast_path_ && mm_config_ &&
+        mm_config_->usesUrdfCollisionMesh() &&
+        start_state.size() == manipulator_dof_ && end_state.size() == manipulator_dof_) {
+      std::vector<Eigen::VectorXd> layered_path;
+      std::vector<double> layered_yaw;
+      const ros::WallTime layered_start = ros::WallTime::now();
+      if (buildLayeredJointPath(start_state, end_state, layered_path, layered_yaw)) {
+        simple_path_container.push_back(layered_path);
+        yaw_list_container.push_back(layered_yaw);
+        singul_container_new.push_back(singul_container.front());
+        Eigen::VectorXd times(layered_path.size() > 1 ? layered_path.size() - 1 : 1);
+        const double total_time = std::accumulate(t_list.begin(), t_list.end(), 0.0);
+        times.setConstant(layered_path.size() > 1
+                              ? total_time / (layered_path.size() - 1)
+                              : total_time);
+        t_list_container.push_back(times);
+        ROS_INFO("[SampleMani][layer] layered IK path accepted: layers=%zu time=%.3f ms",
+                 layered_path.size(),
+                 (ros::WallTime::now() - layered_start).toSec() * 1000.0);
+        ROS_INFO("[SampleMani] stats: max_index=%d collision_checks=%zu edge_interpolations=%zu nodes=%zu fallback_rrt=false",
+                 max_index_, collision_check_calls_, edge_interpolation_checks_, nodes_created_);
+        return true;
+      }
+      ROS_WARN("[SampleMani][layer] layered IK path failed after %.3f ms; falling back to joint-space RRT",
+               (ros::WallTime::now() - layered_start).toSec() * 1000.0);
+      // The failed layered attempt populated node_pool_; reset it before the
+      // RRT search so both trees start from a clean state.
+      init(car_state_list, car_state_list_check, t_list);
+    }
+
     const ros::WallTime rrt_start = ros::WallTime::now();
     bool mani_status = search(start_state, end_state);
     ROS_INFO("[Timing] manipulator RRT search=%.3f ms, status=%s, car_samples=%zu, dense_checks=%zu",
@@ -1648,32 +1843,56 @@ struct ScopedSampleTiming {
     if(cur_state->node_state == ManiPathNode::NODE_STATE::COLLISION || next_state->node_state == ManiPathNode::NODE_STATE::COLLISION){
       return true;
     }
-    
-    Eigen::Matrix4d T_q_now = Eigen::Matrix4d::Zero();
-    int index = cur_state->index;
-    double tau = t_list_[index];
-    
-    double dif = (cur_state->state - next_state->state).lpNorm<Eigen::Infinity>();
-
-
-    if(dif > max_joint_vel_ * tau){
+    if(cur_state->index == next_state->index){
+      return false;
+    }
+    if(cur_state->state.size() != manipulator_dof_ ||
+       next_state->state.size() != manipulator_dof_){
       return true;
     }
 
-    Eigen::Vector3d xt;
-    for (int i = 1; i < check_num_; ++i){   
-      ++edge_interpolation_checks_;
-      xt = car_state_list_check_[index * check_num_ + i];
-      T_q_now << cos(xt[2]), -sin(xt[2]), 0, xt(0),
-                 sin(xt[2]),  cos(xt[2]), 0, xt(1),
-                 0,           0,          1, 0,
-                 0,           0,          0, 1;
-      ++collision_check_calls_;
-      if(mm_config_->checkManicollision(xt, (cur_state->state + (next_state->state - cur_state->state) * double(i) / double(check_num_)), false)){
-        return true;
-      }
+    double tau = 0.0;
+    for(int i = cur_state->index; i < next_state->index; ++i){
+      tau += t_list_[i];
     }
-    return false;
+    if(tau <= 0.0){
+      tau = t_list_[cur_state->index];
+    }
+
+    const int base_index = cur_state->index;
+    const int layer_span = next_state->index - cur_state->index;
+    ManiBasePoseFn base_pose_at = [this, base_index, layer_span](double fraction) -> Eigen::Vector3d {
+      const double seg = base_index + fraction * layer_span;
+      const int dense = static_cast<int>(std::lround(seg * check_num_));
+      if (dense >= 0 && dense < static_cast<int>(car_state_list_check_.size())) {
+        return car_state_list_check_[dense];
+      }
+      const double clamped = std::max(0.0, std::min(1.0, fraction));
+      return (1.0 - clamped) * car_state_list_[base_index] +
+             clamped * car_state_list_[base_index + layer_span];
+    };
+    ManiCollisionFn collision = [this](const Eigen::Vector3d &car_state,
+                                       const Eigen::VectorXd &joint_state,
+                                       int &type) {
+      ++collision_check_calls_;
+      return mm_config_->checkcollision(car_state, joint_state, false, type);
+    };
+
+    // The transition is interpolated and validated with the full coupled
+    // collision gate (base-cloud, arm-cloud, arm-base, arm-arm), not with the
+    // arm-only checker, so a base obstacle prevents an otherwise valid arm
+    // edge from being linked.
+    const int min_samples = std::max(2, check_num_);
+    int collision_type = -1;
+    const bool safe = checkJointTransition(cur_state->state, next_state->state,
+                                           tau, max_joint_vel_, min_samples,
+                                           base_pose_at, collision, collision_type);
+    edge_interpolation_checks_ += static_cast<size_t>(min_samples);
+    if (!safe && collision_type >= 0) {
+      ROS_DEBUG("[SampleMani] inter-layer edge rejected: type=%d layer=%d",
+                collision_type, cur_state->index);
+    }
+    return !safe;
   }
 
   bool SampleMani::getTraj(std::vector<Eigen::VectorXd> &traj){
@@ -1724,6 +1943,8 @@ struct ScopedSampleTiming {
     this->tree_count_ = 0;
     this->anti_tree_count_ = 0;
     this->end_node_ = nullptr;
+    // Cached layer candidates point into node_pool_, which is cleared below.
+    this->layer_candidates_.clear();
 
     // memory
     // std::map<string, ManiPathNodePtr>::iterator it, temp_it;

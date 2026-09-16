@@ -102,6 +102,25 @@ namespace mani_sample {
                                std::vector<LayerIkCandidate> &out,
                                LayerIkStats &stats);
 
+  // Mobile-base pose as a function of the normalized fraction along a joint
+  // transition (0 = from-layer, 1 = to-layer).
+  using ManiBasePoseFn = std::function<Eigen::Vector3d(double fraction)>;
+
+  // Validate a joint transition between two adjacent base layers.  The
+  // interpolation density is derived from the joint displacement, the
+  // transition duration and the joint velocity limit.  Every interpolated
+  // state is checked with `collision` using the mobile-base pose returned by
+  // `base_pose_at`.  Returns false on dimension mismatch, velocity
+  // violation, or any collision.
+  bool checkJointTransition(const Eigen::VectorXd &q_from,
+                            const Eigen::VectorXd &q_to,
+                            double duration,
+                            double max_joint_vel,
+                            int min_samples,
+                            const ManiBasePoseFn &base_pose_at,
+                            const ManiCollisionFn &collision,
+                            int &collision_type);
+
   class ManiPathNode{
     public:
     enum NODE_STATE
@@ -207,6 +226,12 @@ namespace mani_sample {
     string calculateValue(ManiPathNodePtr &x);
     ManiPathNodePtr initNode(int idx, const Eigen::VectorXd &s);
     ManiPathNodePtr getSampleNode();
+    // Greedy layer-by-layer construction using sampleLayerCandidates() and
+    // connectLayerCandidates().  Returns one coupled state per accepted layer.
+    bool buildLayeredJointPath(const Eigen::VectorXd &start_state,
+                               const Eigen::VectorXd &end_state,
+                               std::vector<Eigen::VectorXd> &path,
+                               std::vector<double> &yaw_list);
     ManiPathNodePtr getNearestNode(ManiPathNodePtr &x, bool dir);
     ManiPathNodePtr extendNode(ManiPathNodePtr &q_near, ManiPathNodePtr &q_rand, bool dir);
     void oneShot(ManiPathNodePtr &q);
@@ -232,6 +257,11 @@ namespace mani_sample {
     // at least one candidate is collision free.
     bool sampleLayerCandidates(int layer, const Eigen::VectorXd &seed,
                                std::vector<ManiPathNodePtr> &candidates);
+    // Validate a joint-space edge between two already accepted layer
+    // candidates.  Rejects on collision, velocity violation, dimension
+    // mismatch, or missing candidate layers.
+    bool connectLayerCandidates(int layer, const ManiPathNodePtr &from,
+                                const ManiPathNodePtr &to);
     remani_planner::RrtPlanning::Ptr rrt_plan_;
     std::shared_ptr<remani_planner::MMConfig> mm_config_;
     SampleMani():
