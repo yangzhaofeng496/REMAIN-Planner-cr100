@@ -57,6 +57,10 @@ namespace remani_planner
     void initPlanModules(ros::NodeHandle &nh, PlanningVisualization::Ptr vis = NULL);
     bool EmergencyStop(Eigen::VectorXd stop_pos, double stop_yaw, const int singul);
 
+    // Forward kinematics of the arm chain (base_link -> arm_gripper_link),
+    // used by the FSM to publish the measured end-effector path.
+    bool computeUrdfEeTransform(const Eigen::VectorXd &joints, Eigen::Matrix4d &T) const;
+
     PlanParameters pp_;
     // LocalTrajData local_data_;
     // GlobalTrajData global_data_;
@@ -73,6 +77,8 @@ namespace remani_planner
     ros::Publisher destory_cmd_pub_;
     ros::Publisher frontend_path_nav_pub_;
     ros::Publisher ee_path_nav_pub_;
+    // Final polynomial end-effector path advertised under the task topic.
+    ros::Publisher planned_ee_path_pub_;
     tf::TransformListener tf_listener_;
     KDL::Chain urdf_chain_;
     std::unique_ptr<KDL::ChainFkSolverPos_recursive> urdf_fk_solver_;
@@ -83,7 +89,6 @@ namespace remani_planner
     std::vector<double> opt_time_;
 
   private:
-    bool computeUrdfEeTransform(const Eigen::VectorXd &joints, Eigen::Matrix4d &T) const;
     /* main planning algorithms & modules */
     
     PlanningVisualization::Ptr visualization_;

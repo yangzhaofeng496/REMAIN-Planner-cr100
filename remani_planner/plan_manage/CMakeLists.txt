@@ -63,3 +63,10 @@ target_link_libraries(remani_planner_node
   ${catkin_LIBRARIES}
   vis_utils
   )
+
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(ee_path_utils_test test/ee_path_utils_test.cpp)
+  if(TARGET ee_path_utils_test)
+    target_link_libraries(ee_path_utils_test ${catkin_LIBRARIES})
+  endif()
+endif()

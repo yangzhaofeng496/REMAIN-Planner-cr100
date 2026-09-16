@@ -107,6 +107,8 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
     // ee_path_nav is the planner's EE reference path.  The measured path is
     // published separately by model_vis as kinoastar/ee_path_actual.
     ee_path_nav_pub_ = nh.advertise<nav_msgs::Path>("kinoastar/ee_path_nav", 1, true);
+    planned_ee_path_pub_ =
+        nh.advertise<nav_msgs::Path>("/remani_planner/planned_ee_path", 1, true);
     pp_.traj_dim_ = pp_.mobile_base_dim_ + pp_.manipulator_dim_;
     total_time_.clear();
 
@@ -844,6 +846,7 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
     }
     frontend_path_nav_pub_.publish(executed_base_path);
     ee_path_nav_pub_.publish(executed_ee_path);
+    planned_ee_path_pub_.publish(executed_ee_path);
     if (!executed_ee_path.poses.empty()) {
       const auto &p = executed_ee_path.poses.back().pose.position;
       ROS_WARN_STREAM("[Planner] ee_path_nav publish count=" << executed_ee_path.poses.size()

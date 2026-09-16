@@ -102,6 +102,9 @@ namespace remani_planner
 
     start_pub_ = nh.advertise<std_msgs::Bool>("planning/start", 1);
     reached_pub_ = nh.advertise<std_msgs::Bool>("planning/finish", 1);
+    actual_ee_path_pub_ =
+        nh.advertise<nav_msgs::Path>("/remani_planner/actual_ee_path", 1, true);
+    resetEePath(actual_ee_path_, "world", ros::Time::now());
     waypoint_sub_ = nh.subscribe("/move_base_simple/goal", 1, &REMANIReplanFSM::waypointCallback, this);
     
   }
@@ -541,6 +544,54 @@ namespace remani_planner
       mm_state_vel_(mobile_base_dim_ + i) = msg->velocity[i];
       mm_state_acc_(mobile_base_dim_ + i) = msg->effort[i];
     }
+    if(!planner_manager_ || !have_odom_ || mm_state_pos_.size() < traj_dim_){
+      return;
+    }
+    const ros::Time now = ros::Time::now();
+    // Append measured end-effector samples at the joint-state callback rate,
+    // throttled to ~20 Hz.
+    if(last_actual_ee_time_.isZero() || (now - last_actual_ee_time_).toSec() >= 0.05){
+      Eigen::Matrix4d T_ee;
+      if(planner_manager_->computeUrdfEeTransform(mm_state_pos_.tail(manipulator_dim_), T_ee)){
+        const Eigen::Vector3d car_state(mm_state_pos_(0), mm_state_pos_(1), mm_car_yaw_);
+        Eigen::Matrix4d T_car;
+        planner_manager_->mm_config_->CarState2T(car_state, T_car);
+        appendEePose(actual_ee_path_, T_car * T_ee, now);
+        actual_ee_path_.header.stamp = now;
+        actual_ee_path_pub_.publish(actual_ee_path_);
+      }
+      last_actual_ee_time_ = now;
+    }
+
+    // Throttled planned-vs-actual tracking diagnostics.
+    SingulTrajData &traj = planner_manager_->traj_container_.singul_traj_data;
+    if(traj.traj_id > 0){
+      const double t = now.toSec() - traj.start_time;
+      if(t >= 0.0 && t <= traj.duration){
+        const Eigen::VectorXd planned = traj.getPos(t);
+        const double joint_dist =
+            (mm_state_pos_.tail(manipulator_dim_) -
+             planned.tail(manipulator_dim_)).norm();
+        double ee_dist = -1.0;
+        Eigen::Matrix4d T_planned_ee;
+        if(planner_manager_->computeUrdfEeTransform(planned.tail(manipulator_dim_), T_planned_ee)){
+          Eigen::Matrix4d T_planned_car;
+          const Eigen::Vector3d planned_car(planned(0), planned(1), traj.getCarAngle(t));
+          planner_manager_->mm_config_->CarState2T(planned_car, T_planned_car);
+          Eigen::Matrix4d T_actual_ee;
+          if(planner_manager_->computeUrdfEeTransform(mm_state_pos_.tail(manipulator_dim_), T_actual_ee)){
+            const Eigen::Vector3d actual_car(mm_state_pos_(0), mm_state_pos_(1), mm_car_yaw_);
+            Eigen::Matrix4d T_actual_car;
+            planner_manager_->mm_config_->CarState2T(actual_car, T_actual_car);
+            ee_dist = ((T_actual_car * T_actual_ee).block<3, 1>(0, 3) -
+                       (T_planned_car * T_planned_ee).block<3, 1>(0, 3)).norm();
+          }
+        }
+        ROS_INFO_THROTTLE(1.0,
+                          "[EETrack] t=%.2f joint_dist=%.4f ee_dist=%.4f",
+                          t, joint_dist, ee_dist);
+      }
+    }
   }
 
   void REMANIReplanFSM::gripperCallback(const std_msgs::Bool::ConstPtr &msg){
@@ -606,6 +657,9 @@ namespace remani_planner
 
   void REMANIReplanFSM::sendPolyTrajROSMsg(){
     auto data = &planner_manager_->traj_container_.singul_traj_data;
+    // Start a fresh measured end-effector trace for each new trajectory.
+    resetEePath(actual_ee_path_, "world", ros::Time::now());
+    last_actual_ee_time_ = ros::Time(0);
     // Send one complete trajectory atomically.  Sending one ROS message per
     // piece lets a replan interleave with the previous trajectory and causes
     // the controller to append pieces from different trajectory versions.

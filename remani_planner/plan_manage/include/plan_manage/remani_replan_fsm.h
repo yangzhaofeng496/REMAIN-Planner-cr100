@@ -21,6 +21,7 @@
 #include <traj_utils/DataDisp.h>
 #include <plan_manage/planner_manager.h>
 #include <plan_manage/planning_visualization.h>
+#include <plan_manage/ee_path_utils.h>
 #include <quadrotor_msgs/PolynomialTraj.h>
 #include <traj_utils/Assignment.h>
 #include <tf2_ros/transform_broadcaster.h>
@@ -124,6 +125,12 @@ namespace remani_planner
     ros::Timer watch_timer_;
     ros::Publisher collision_type_pub_;
     int last_collision_type_{-1};
+
+    // Measured end-effector path built from live base odometry and joint
+    // state (red in RViz), plus its publish throttle.
+    ros::Publisher actual_ee_path_pub_;
+    nav_msgs::Path actual_ee_path_;
+    ros::Time last_actual_ee_time_;
 
     ros::Time t_last_Astar_;
 
