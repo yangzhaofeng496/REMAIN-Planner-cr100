@@ -10,6 +10,30 @@
 
 **Spec:** Chat-approved requirement: each base trajectory point gets Cartesian arm sampling; every IK result must pass full collision checking; consecutive joint solutions are interpolated and checked; the executed trajectory must preserve the IK joint waypoints.
 
+## Execution Status (2026-09-16)
+
+- Tasks 1-7: implemented and committed, each with focused unit tests.
+  - `3307382` layered waypoint interpolation
+  - `568574f` full collision gate for IK nodes
+  - `4830d9f` per-layer candidates
+  - `163b3cf` collision-checked layer connections
+  - `ff50dc5` backend hard waypoints
+  - `b80757c` planned/actual EE visualization
+  - `6e5ffeb` static PCD readiness
+  - `e011485` layered-route hardening + manual-goal crash fix
+- Tests: path_searching (17), traj_opt (4), remani_planner (3), Python visualization (5) all pass.
+- Task 8: build, container restart, global-cloud wait, and goal publication verified.
+  The saved goal did **not** reach `WAIT_TARGET`: with the required full coupled
+  collision gate, the A* front-end returns `NO_PATH` (status=3). The layered
+  route is blocked at layer 24/27 (no connectable candidate) and the joint-space
+  RRT times out. A single globally safe posture does not exist for this route
+  (shared-posture search exhausts 256 attempts).
+  - Classification: **collision model / coupled-corridor** (not waypoint
+    constraint, coordinate transform, or controller tracking). Evidence log:
+    `.diagnostics/task8_saved_goal_failure.log`.
+  - No `CollisionWatch COLLISION` or `EMERGENCY_STOP` occurred because the
+    trajectory was never accepted.
+
 ## Global Constraints
 
 - The fixed locomotive PCD scene uses `/home/hyf/REMAIN-Planner-cr100/scansdibu_xyzRemove_filtered_10cm.pcd`.
