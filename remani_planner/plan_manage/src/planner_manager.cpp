@@ -564,6 +564,10 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
     std::vector<Eigen::MatrixXd> optWps_container;
     std::vector<Eigen::MatrixXd> optCps_container;
     
+    // Hand the accepted front-end joint waypoints (and their segment times,
+    // already in initT_container) to the optimizer so it can hold the
+    // manipulator junctions fixed when the option is enabled.
+    ploy_traj_opt_->setHardWaypoints(initInnerPts_container);
     flag_success = ploy_traj_opt_->OptimizeTrajectory_lbfgs(iniStates_container, finStates_container,
                                                             initInnerPts_container, initT_container, singul_container,
                                                             optCps_container, optWps_container, optT_container, optEECps_container);
@@ -604,6 +608,31 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
                safety_time_ms);
       t_opt += ros::Duration(safety_time_ms / 1000.0);
       flag_success = safety_ok;
+    }
+
+    // Final hard-waypoint gate: reject the optimized trajectory if any
+    // preserved front-end joint waypoint drifted beyond tolerance.  The
+    // front-end seed below passes through the waypoints by construction.
+    if (flag_success && ploy_traj_opt_->hasPreservedWaypoints()) {
+      bool waypoints_ok = true;
+      for (unsigned int i = 0; i < initInnerPts_container.size() && waypoints_ok; ++i) {
+        if (initInnerPts_container[i].cols() == 0) continue;
+        const Eigen::MatrixXd junctions =
+            (*ploy_traj_opt_->getMinSnapOptContainerPtr())[i]
+                .getTraj(singul_container[i])
+                .getPositions();
+        if (junctions.cols() != initInnerPts_container[i].cols() + 2) {
+          continue;
+        }
+        if (!hardWaypointsSatisfied(junctions, initInnerPts_container[i],
+                                    pp_.mobile_base_dim_, pp_.manipulator_dim_, 1.0e-3)) {
+          ROS_ERROR("[Planner] preserved joint waypoint validation failed: segment=%u", i);
+          waypoints_ok = false;
+        }
+      }
+      ROS_INFO("[Planner] preserved joint waypoint validation: ok=%s",
+               waypoints_ok ? "true" : "false");
+      flag_success = waypoints_ok;
     }
 
     // Fallback: if the optimizer's smoothed trajectory is rejected by the

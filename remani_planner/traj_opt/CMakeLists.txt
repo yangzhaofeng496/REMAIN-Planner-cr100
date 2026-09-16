@@ -44,3 +44,11 @@ target_link_libraries( traj_opt
     ${catkin_LIBRARIES}
     ) 
 
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(hard_waypoint_test test/hard_waypoint_test.cpp)
+  if(TARGET hard_waypoint_test)
+    target_link_libraries(hard_waypoint_test traj_opt
+      ${catkin_LIBRARIES} ${PCL_LIBRARIES})
+  endif()
+endif()
+

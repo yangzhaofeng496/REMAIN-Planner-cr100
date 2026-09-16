@@ -9,6 +9,7 @@
 #include <fstream>
 #include <sys/time.h>
 #include <ctime>
+#include <cmath>
 #include <math.h>
 #include "optimizer/lbfgs.hpp"
 #include "plan_env/grid_map.h"
@@ -20,6 +21,53 @@
 
 namespace remani_planner
 {
+
+  // Quadratic well pulling the manipulator rows [arm_offset, arm_offset +
+  // arm_dim) of every interior waypoint toward `hard`.  Adds the gradient to
+  // `gradP` and returns the accumulated penalty.  Kept dependency-free so the
+  // hard-waypoint equality logic is unit-testable.
+  template <typename PMat, typename HMat, typename GMat>
+  inline double hardWaypointGradCost(const PMat &points, const HMat &hard,
+                                     int arm_offset, int arm_dim,
+                                     double weight, GMat &gradP)
+  {
+    if (arm_dim <= 0 || weight <= 0.0) return 0.0;
+    if (points.rows() != hard.rows() || points.cols() != hard.cols()) return 0.0;
+    if (arm_offset < 0 || arm_offset + arm_dim > points.rows()) return 0.0;
+    double cost = 0.0;
+    for (int j = 0; j < points.cols(); ++j)
+    {
+      for (int r = 0; r < arm_dim; ++r)
+      {
+        const int rr = arm_offset + r;
+        const double diff = points(rr, j) - hard(rr, j);
+        cost += weight * diff * diff;
+        gradP(rr, j) += 2.0 * weight * diff;
+      }
+    }
+    return cost;
+  }
+
+  // True when every interior junction's manipulator rows match the hard
+  // waypoints within `tol`.  `junctions` has two extra columns (head/tail)
+  // relative to `hard`.
+  inline bool hardWaypointsSatisfied(const Eigen::MatrixXd &junctions,
+                                     const Eigen::MatrixXd &hard,
+                                     int arm_offset, int arm_dim, double tol)
+  {
+    if (arm_dim <= 0 || junctions.cols() != hard.cols() + 2) return false;
+    if (junctions.rows() != hard.rows()) return false;
+    if (arm_offset < 0 || arm_offset + arm_dim > junctions.rows()) return false;
+    for (int j = 0; j < hard.cols(); ++j)
+    {
+      for (int r = 0; r < arm_dim; ++r)
+      {
+        if (std::fabs(junctions(arm_offset + r, j + 1) - hard(arm_offset + r, j)) > tol)
+          return false;
+      }
+    }
+    return true;
+  }
 
   class ConstrainPoints
   {
@@ -84,6 +132,11 @@ namespace remani_planner
     Eigen::VectorXd time_coll_other_;
     Eigen::VectorXi times_coll_other_;
     bool obs_viol_, car_fea_viol_, mani_fea_viol_;
+    // Preserve the accepted front-end joint waypoints as hard constraints:
+    // each interior junction keeps its manipulator rows within 1e-3.
+    bool preserve_frontend_joint_waypoints_{false};
+    double hard_waypoint_weight_{1.0e6};
+    std::vector<Eigen::MatrixXd> hard_waypoints_container_;
     Eigen::Matrix4d T_q_0_;
     size_t mm_obstacle_gradient_calls_{0};
     size_t mm_final_safety_checks_{0};
@@ -134,6 +187,17 @@ namespace remani_planner
     void setParam(ros::NodeHandle &nh, const std::shared_ptr<GridMap> &map, const std::shared_ptr<MMConfig> &mm_config);
     void clear_resize_Cps_container(int container_size);
     void setControlPoints(const int trajid, const Eigen::MatrixXd &points);
+    // Provide the accepted front-end joint waypoints (interior junctions) so
+    // the optimizer can hold them fixed when
+    // optimize/preserve_frontend_joint_waypoints is enabled.
+    void setHardWaypoints(const std::vector<Eigen::MatrixXd> &hard_waypoints)
+    {
+      hard_waypoints_container_ = hard_waypoints;
+    }
+    bool hasPreservedWaypoints() const
+    {
+      return preserve_frontend_joint_waypoints_ && !hard_waypoints_container_.empty();
+    }
 
     /* helper functions */
     inline ConstrainPoints getControlPoints() { return cps_; }

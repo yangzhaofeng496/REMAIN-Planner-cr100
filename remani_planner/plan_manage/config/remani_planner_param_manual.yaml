@@ -50,6 +50,12 @@ search:
   # 50 ms was too short for the joint-space RRT to find that coupled path.
   max_mani_search_time: 8.0
 
+optimize:
+  # Hold the accepted front-end IK joint waypoints fixed through the backend
+  # minimum-snap optimization for the fixed locomotive scene.
+  preserve_frontend_joint_waypoints: true
+  hard_waypoint_weight: 1000000.0
+
 optimization:
   weight_obstacle               : 50000.0
   weight_manipulator_self       : 1000.0

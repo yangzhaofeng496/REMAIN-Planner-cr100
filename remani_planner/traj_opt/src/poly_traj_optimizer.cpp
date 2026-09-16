@@ -23,6 +23,13 @@ namespace remani_planner
 
     nh.param("optimization/dense_sample_resolution", dense_sample_resolution_, -1);
 
+    nh.param("optimize/preserve_frontend_joint_waypoints",
+             preserve_frontend_joint_waypoints_, false);
+    nh.param("optimize/hard_waypoint_weight", hard_waypoint_weight_, 1.0e6);
+    ROS_INFO("[Optimizer] preserve_frontend_joint_waypoints=%s weight=%.1f",
+             preserve_frontend_joint_waypoints_ ? "true" : "false",
+             hard_waypoint_weight_);
+
     nh.param("optimization/safe_margin", safe_margin_, 0.1);
     nh.param("optimization/safe_margin_mani", safe_margin_mani_, 0.1);
     nh.param("optimization/self_safe_margin", self_safe_margin_, 0.1);
@@ -252,7 +259,29 @@ namespace remani_planner
       return false;
     }
 
-    if (!good_traj) {
+    // Verify that the optimized trajectory still passes through every
+    // preserved front-end joint waypoint before it can be published.
+    bool waypoints_ok = true;
+    if (preserve_frontend_joint_waypoints_ &&
+        hard_waypoints_container_.size() == static_cast<size_t>(traj_num_)) {
+      for (int i = 0; i < traj_num_ && waypoints_ok; ++i) {
+        if (hard_waypoints_container_[i].cols() !=
+            piece_num_container_[i] - 1) {
+          continue;
+        }
+        const Eigen::MatrixXd junctions =
+            SnapOpt_container_[i].getInitConstrainPoints(1);
+        if (!hardWaypointsSatisfied(junctions, hard_waypoints_container_[i],
+                                    mobile_base_dof_, manipulator_dof_, 1.0e-3)) {
+          ROS_ERROR("[Optimizer] preserved waypoint validation failed: segment=%d", i);
+          waypoints_ok = false;
+        }
+      }
+      ROS_INFO("[Optimizer] preserved waypoint validation: ok=%s segments=%d",
+               waypoints_ok ? "true" : "false", traj_num_);
+    }
+
+    if (!good_traj || !waypoints_ok) {
       // The L-BFGS solve is iteration-bounded and can leave a small residual
       // collision or velocity violation.  The front-end seed is built from a
       // collision-checked coupled RRT path, so when the optimized result is
@@ -282,6 +311,9 @@ namespace remani_planner
         return true;
       }
       ROS_WARN("[Optimizer] optimized trajectory rejected and front-end seed failed safety check");
+    }
+    if (!waypoints_ok) {
+      return false;
     }
 
     optCps_container.clear();
@@ -529,6 +561,20 @@ namespace remani_planner
       gradP.setZero();
       P_container.push_back(P);
       gradP_container.push_back(gradP);
+    }
+
+    // Hold the accepted front-end joint waypoints: a strong quadratic well on
+    // the manipulator rows of every interior junction.  The base rows remain
+    // free so the trajectory can still be smoothed for feasibility.
+    if (opt->preserve_frontend_joint_waypoints_ &&
+        opt->hard_waypoints_container_.size() == static_cast<size_t>(opt->traj_num_)) {
+      for (int trajid = 0; trajid < opt->traj_num_; ++trajid) {
+        const Eigen::MatrixXd &hard = opt->hard_waypoints_container_[trajid];
+        total_smoo_cost += hardWaypointGradCost(
+            P_container[trajid], hard, opt->mobile_base_dof_,
+            opt->manipulator_dof_, opt->hard_waypoint_weight_,
+            gradP_container[trajid]);
+      }
     }
 
     std::vector<Eigen::VectorXd> T_container; // real time
