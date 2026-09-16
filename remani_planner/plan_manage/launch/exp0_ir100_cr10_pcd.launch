@@ -29,13 +29,19 @@
   <arg name="map_size_z" default="3.0"/>
 
   <!-- Reuse the complete IR100+CR10 simulator/planner/RViz launch, but do
-       not start the synthetic test-bar map.  global_map_refresh lets every
-       re-published cloud rebuild the world map so 2D Pose Estimate moves the
-       locomotive interactively. -->
+       not start the synthetic test-bar map.  The static PCD scene uses
+       global_map_refresh=false so the ESDF is built once from the first
+       global cloud and stays fixed during execution. -->
   <include file="$(find remani_planner)/launch/exp0_ir100_cr10_manual.launch">
-    <!-- The PCD publisher is the actual global map source for this demo. -->
-    <arg name="load_map" value="true"/>
-    <arg name="global_map_refresh" value="true"/>
+    <!-- The static PCD publisher is the only global map source for this
+         demo.  Do not start the synthetic test-bar map_generator: it would
+         publish to the same /map_generator/global_cloud topic and race with
+         the PCD.  GridMap still subscribes because grid_map/use_load_map is
+         true in the planner YAML. -->
+    <arg name="load_map" value="false"/>
+    <!-- Fixed static scene: build the ESDF once from the first global cloud
+         and never rebuild it during execution. -->
+    <arg name="global_map_refresh" value="false"/>
     <!-- Known static map: keep a tight inflation so the raised undercarriage
          still leaves room for the folded manipulator. -->
     <arg name="obstacles_inflation" value="0.0"/>

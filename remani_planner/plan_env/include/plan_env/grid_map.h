@@ -239,6 +239,13 @@ public:
   // int getVoxelNum();
   bool getOdomDepthTimeout() { return md_.flag_depth_odom_timeout_; }
 
+  // True when the planner is configured to consume a global (static PCD) map
+  // rather than a live depth-camera map.
+  bool usesGlobalMap() const { return mp_.use_global_map_; }
+  // True once the global-map cloud has been received and written into the
+  // occupancy buffer.  Goal planning is gated on this for the static scene.
+  bool isGlobalMapReady() const { return md_.has_cloud_; }
+
   // esdf
   template <typename F_get_val, typename F_set_val>
   void fillESDF(F_get_val f_get_val, F_set_val f_set_val, int start, int end, int dim);

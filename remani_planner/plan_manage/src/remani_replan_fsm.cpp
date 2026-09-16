@@ -406,6 +406,21 @@ namespace remani_planner
 
   bool REMANIReplanFSM::planNextWaypoint(const Eigen::VectorXd next_wp, const double next_yaw)
   {
+    // The fixed PCD scene must not start planning before the static global
+    // cloud has populated the occupancy buffer; otherwise the first plan is
+    // built against an empty map and fails mid-execution.
+    if(planner_manager_ && planner_manager_->grid_map_ &&
+       planner_manager_->grid_map_->usesGlobalMap() &&
+       !planner_manager_->grid_map_->isGlobalMapReady()){
+      ROS_WARN("[FSM] rejecting goal: static global map is not ready yet");
+      return false;
+    }
+    ROS_INFO("[FSM] accepting goal: uses_global_map=%s global_map_ready=%s",
+             (planner_manager_ && planner_manager_->grid_map_ &&
+              planner_manager_->grid_map_->usesGlobalMap()) ? "true" : "false",
+             (planner_manager_ && planner_manager_->grid_map_ &&
+              planner_manager_->grid_map_->isGlobalMapReady()) ? "true" : "false");
+
     std::vector<Eigen::VectorXd> one_pt_wps;
     one_pt_wps.push_back(next_wp);
     bool success = planner_manager_->planGlobalTrajWaypoints(
