@@ -33,6 +33,8 @@
 	<arg name="profile_lateral_corridor" default="0.3"/>
 	<arg name="profile_poly_piece_length" default="2.0"/>
 	<arg name="global_map_refresh" default="false"/>
+	<arg name="use_global_map" default="true"/>
+	<arg name="use_load_map" default="true"/>
 	<arg name="obstacles_inflation" default="0.15"/>
 
 	<arg name="cx"/>
@@ -101,7 +103,8 @@
 		<param name="grid_map/fy" value="$(arg fy)"/>
 		<!-- depth filter -->
 		<param name="grid_map/use_depth_filter"       value="true"/>
-		<param name="grid_map/use_global_map"         value="true"/>
+		<param name="grid_map/use_global_map"         value="$(arg use_global_map)"/>
+		<param name="grid_map/use_load_map"           value="$(arg use_load_map)"/>
 		<param name="grid_map/global_map_refresh"     value="$(arg global_map_refresh)"/>
 		<param name="grid_map/depth_filter_tolerance" value="0.15"/>
 		<param name="grid_map/depth_filter_maxdist"   value="5.0"/>

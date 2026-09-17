@@ -37,7 +37,7 @@ optimization:
   ground_safe_dis        : 0.03           # Safe distance from the ground
   safe_margin            : 0.10           # General safe margin
   safe_margin_mani       : 0.10           # Safe margin for the manipulator
-  self_safe_margin       : 0.10           # Safe margin for self
+  self_safe_margin       : 0.03           # URDF mesh contact tolerance; zero posture has 0.037 m Link4-Link6 clearance
   ground_safe_margin     : 0.03           # Safe margin from the ground
 
   mobile_base_opt_gear: true              # Whether to optimize the gear

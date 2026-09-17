@@ -1,5 +1,6 @@
 #include "mm_config/mm_config.hpp"
 #include <kdl_parser/kdl_parser.hpp>
+#include <kdl/chainiksolverpos_lma.hpp>
 #include <urdf/model.h>
 #include <limits>
 #include <random>
@@ -19,7 +20,7 @@ CollisionCounters collision_counters;
 struct ScopedCollisionTiming {
   const char *name; ros::WallTime start;
   explicit ScopedCollisionTiming(const char *n) : name(n), start(ros::WallTime::now()) {}
-  ~ScopedCollisionTiming() { ROS_INFO_THROTTLE(1.0, "[Timing] %s latest=%.3f ms", name, (ros::WallTime::now()-start).toSec()*1000.0); }
+  ~ScopedCollisionTiming() { (void)name; (void)start; }
 };
 }
 
@@ -666,7 +667,8 @@ bool MMConfig::getUrdfLinkTransforms(const Eigen::VectorXd &theta,
     }
     for (unsigned int i = 0; i < urdf_chain_.segments.size(); ++i) {
         const std::string name = urdf_chain_.segments[i].getName();
-        if (name != "arm_base_link" && name.find("Link") != 0) continue;
+        if (name != "arm_base_link" && name.find("Link") != 0 &&
+            name != "arm_gripper_link") continue;
         KDL::Frame frame;
         if (urdf_fk_solver_->JntToCart(q, frame, i + 1) < 0) return false;
         Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
@@ -675,7 +677,10 @@ bool MMConfig::getUrdfLinkTransforms(const Eigen::VectorXd &theta,
         T(0,3) = frame.p.x(); T(1,3) = frame.p.y(); T(2,3) = frame.p.z();
         transforms.push_back(T);
     }
-    return transforms.size() >= static_cast<size_t>(manipulator_dof_ + 1);
+    // Keep the fixed terminal gripper transform after Link6 so collision
+    // checking can include arm_gripper_link while still skipping its
+    // adjacent fixed connection to Link6.
+    return transforms.size() >= static_cast<size_t>(manipulator_dof_ + 2);
 }
 
 void MMConfig::getJointTMat(const Eigen::VectorXd &theta, std::vector<Eigen::Matrix4d> &T_joint){
@@ -972,15 +977,18 @@ bool MMConfig::checkManiManiCollision(Eigen::VectorXd mani_state, bool safe, dou
     if (use_urdf_collision_mesh_ && urdf_collision_model_ &&
         mani_state.size() == manipulator_dof_) {
         std::vector<Eigen::Matrix4d> link_tf;
-        if (getUrdfLinkTransforms(mani_state, link_tf) && link_tf.size() >= 7) {
+        if (getUrdfLinkTransforms(mani_state, link_tf) && link_tf.size() >= 8) {
             const std::string names[] = {"arm_base_link", "Link1", "Link2", "Link3",
-                                         "Link4", "Link5", "Link6"};
-            const double clearance = safe ? self_safe_margin_ : 0.0;
+                                         "Link4", "Link5", "Link6", "arm_gripper_link"};
+            // Self-collision is safety-critical at every planning stage.  Do
+            // not allow callers that request a contact-only check to bypass
+            // the configured self-collision margin.
+            const double clearance = self_safe_margin_;
             // The arm mounting/base link is the fixed connection to the
             // mobile platform and is intentionally excluded from arm
             // self-collision.  Only actual arm links are checked here.
-            for (size_t i = 1; i < 7; ++i) {
-                for (size_t j = i + 2; j < 7; ++j) {
+            for (size_t i = 1; i < 8; ++i) {
+                for (size_t j = i + 2; j < 8; ++j) {
                     for (const auto &a : urdf_collision_model_->linkSpheres(names[i])) {
                         const Eigen::Vector3d pa =
                             (link_tf[i] * Eigen::Vector4d(a.center.x(), a.center.y(), a.center.z(), 1.0)).head<3>();
@@ -999,9 +1007,7 @@ bool MMConfig::checkManiManiCollision(Eigen::VectorXd mani_state, bool safe, dou
                                 // link thickness.  Do not add the legacy
                                 // thickness again; only retain a tiny sample
                                 // discretization tolerance.
-                                const double exact_limit = safe
-                                    ? self_safe_margin_
-                                    : collision_mesh_contact_tolerance_;
+                                const double exact_limit = self_safe_margin_;
                                 const size_t step_a = std::max<size_t>(1, sa.size() / 120);
                                 const size_t step_b = std::max<size_t>(1, sb.size() / 120);
                                 for (size_t ia = 0; ia < sa.size(); ia += step_a) {
@@ -1028,7 +1034,9 @@ bool MMConfig::checkManiManiCollision(Eigen::VectorXd mani_state, bool safe, dou
             return false;
         }
     }
-    double safe_dist = safe ? 2.0 * manipulator_thickness_ + self_safe_margin_ : 2.0 * manipulator_thickness_;
+    // Keep the legacy collision model consistent with the URDF mesh model:
+    // every self-collision query includes the self-collision safety margin.
+    double safe_dist = 2.0 * manipulator_thickness_ + self_safe_margin_;
     Eigen::Vector3d pt_on_link;
     std::vector<Eigen::Vector3d> pt_to_check_list;
     pt_to_check_list.reserve(20);
@@ -1060,6 +1068,106 @@ bool MMConfig::checkManiManiCollision(Eigen::VectorXd mani_state, bool safe, dou
     }
     min_dist = safe_dist;
     return false;
+}
+
+void MMConfig::getSelfCollisionMarkers(const Eigen::Vector3d &car_state,
+                                       const Eigen::VectorXd &mani_state,
+                                       visualization_msgs::MarkerArray &markers) const {
+    visualization_msgs::Marker clear;
+    clear.action = visualization_msgs::Marker::DELETEALL;
+    markers.markers.push_back(clear);
+    if (!use_urdf_collision_mesh_ || !urdf_collision_model_ ||
+        mani_state.size() != manipulator_dof_ || !urdf_fk_ready_) return;
+    std::vector<Eigen::Matrix4d> link_tf;
+    if (!const_cast<MMConfig*>(this)->getUrdfLinkTransforms(mani_state, link_tf) || link_tf.size() < 8) return;
+    const std::string names[] = {"arm_base_link", "Link1", "Link2", "Link3", "Link4", "Link5", "Link6", "arm_gripper_link"};
+    double best = self_safe_margin_;
+    Eigen::Vector3d best_a, best_b;
+    std::string best_pair;
+    for (size_t i = 1; i < 8; ++i) for (size_t j = i + 2; j < 8; ++j) {
+        const auto &sa = urdf_collision_model_->linkSamples(names[i]);
+        const auto &sb = urdf_collision_model_->linkSamples(names[j]);
+        const size_t step_a = std::max<size_t>(1, sa.size() / 120), step_b = std::max<size_t>(1, sb.size() / 120);
+        for (size_t ia = 0; ia < sa.size(); ia += step_a) {
+            const Eigen::Vector3d pa = (link_tf[i] * Eigen::Vector4d(sa[ia].x(), sa[ia].y(), sa[ia].z(), 1.0)).head<3>();
+            for (size_t ib = 0; ib < sb.size(); ib += step_b) {
+                const Eigen::Vector3d pb = (link_tf[j] * Eigen::Vector4d(sb[ib].x(), sb[ib].y(), sb[ib].z(), 1.0)).head<3>();
+                const double d = (pa - pb).norm();
+                if (d < best) { best = d; best_a = pa; best_b = pb; best_pair = names[i] + "-" + names[j]; }
+            }
+        }
+    }
+    if (best_pair.empty()) return;
+    Eigen::Matrix4d Tcar = Eigen::Matrix4d::Identity();
+    Tcar.block<2,2>(0,0) = Eigen::Rotation2Dd(car_state.z()).toRotationMatrix();
+    Tcar(0,3)=car_state.x(); Tcar(1,3)=car_state.y();
+    // getUrdfLinkTransforms() is already expressed from base_link, including
+    // the fixed arm mounting chain.  Do not apply T_q_0_ a second time.
+    const Eigen::Matrix4d Tw = Tcar;
+    best_a = (Tw * Eigen::Vector4d(best_a.x(), best_a.y(), best_a.z(), 1.0)).head<3>();
+    best_b = (Tw * Eigen::Vector4d(best_b.x(), best_b.y(), best_b.z(), 1.0)).head<3>();
+    visualization_msgs::Marker line;
+    line.header.frame_id = "world"; line.header.stamp = ros::Time::now(); line.ns = "self_collision"; line.id = 1;
+    line.type = visualization_msgs::Marker::LINE_LIST; line.action = visualization_msgs::Marker::ADD;
+    line.scale.x = 0.025; line.color.r = 1.0; line.color.g = 1.0; line.color.a = 1.0;
+    geometry_msgs::Point a,b; a.x=best_a.x(); a.y=best_a.y(); a.z=best_a.z(); b.x=best_b.x(); b.y=best_b.y(); b.z=best_b.z();
+    line.points.push_back(a); line.points.push_back(b); markers.markers.push_back(line);
+    visualization_msgs::Marker text;
+    text.header = line.header; text.ns = "self_collision"; text.id = 2; text.type = visualization_msgs::Marker::TEXT_VIEW_FACING; text.action = visualization_msgs::Marker::ADD;
+    text.pose.position.x=(a.x+b.x)/2; text.pose.position.y=(a.y+b.y)/2; text.pose.position.z=(a.z+b.z)/2+0.12; text.scale.z=0.12; text.color.r=1.0; text.color.g=1.0; text.color.a=1.0;
+    text.text = best_pair + " d=" + std::to_string(best) + "m"; markers.markers.push_back(text);
+
+    // Overlay only the two links in the detected self-collision pair in red.
+    // The normal robot model is published in gray by the FSM above.
+    std::vector<visualization_msgs::Marker> red_links;
+    visualization_msgs::MarkerArray robot_meshes;
+    const_cast<MMConfig*>(this)->getMMMarkerArray(robot_meshes, "self_collision_links", 0, 1.0,
+                                                   car_state, mani_state, true);
+    auto link_index = [](const std::string &name) -> int {
+        if (name == "Link1") return 12;
+        if (name == "Link2") return 13;
+        if (name == "Link3") return 14;
+        if (name == "Link4") return 15;
+        if (name == "Link5") return 16;
+        if (name == "Link6") return 17;
+        if (name == "arm_gripper_link") return 18;
+        return -1;
+    };
+    const int id_a = link_index(best_pair.substr(0, best_pair.find('-')));
+    const int id_b = link_index(best_pair.substr(best_pair.find('-') + 1));
+    for (auto marker : robot_meshes.markers) {
+        if (marker.id != id_a && marker.id != id_b) continue;
+        marker.ns = "self_collision_links_red";
+        marker.mesh_use_embedded_materials = false;
+        marker.color.r = 1.0; marker.color.g = 1.0; marker.color.b = 0.0; marker.color.a = 1.0;
+        markers.markers.push_back(marker);
+    }
+}
+
+visualization_msgs::Marker MMConfig::getArmGripperMarker(const Eigen::Vector3d &car_state,
+                                                         const Eigen::VectorXd &mani_state) const {
+    visualization_msgs::Marker marker;
+    marker.header.frame_id = "world";
+    marker.header.stamp = ros::Time::now();
+    marker.ns = "gray_robot_model";
+    marker.id = 18;
+    marker.type = visualization_msgs::Marker::MESH_RESOURCE;
+    marker.action = visualization_msgs::Marker::ADD;
+    marker.mesh_resource = "package://ir100_description/meshes/gripper.stl";
+    marker.mesh_use_embedded_materials = false;
+    marker.color.r = 0.70; marker.color.g = 0.70; marker.color.b = 0.70; marker.color.a = 1.0;
+    marker.scale.x = marker.scale.y = marker.scale.z = 1.0;
+    std::vector<Eigen::Matrix4d> link_tf;
+    if (!const_cast<MMConfig*>(this)->getUrdfLinkTransforms(mani_state, link_tf) || link_tf.size() < 8)
+        return marker;
+    Eigen::Matrix4d Tcar = Eigen::Matrix4d::Identity();
+    Tcar.block<2,2>(0,0) = Eigen::Rotation2Dd(car_state.z()).toRotationMatrix();
+    Tcar(0,3) = car_state.x(); Tcar(1,3) = car_state.y();
+    Eigen::Matrix4d T = Tcar * link_tf[7];
+    marker.pose.position.x = T(0,3); marker.pose.position.y = T(1,3); marker.pose.position.z = T(2,3);
+    Eigen::Quaterniond q(T.block<3,3>(0,0));
+    marker.pose.orientation.w=q.w(); marker.pose.orientation.x=q.x(); marker.pose.orientation.y=q.y(); marker.pose.orientation.z=q.z();
+    return marker;
 }
 
 bool MMConfig::checkManicollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_state, bool safe){
@@ -1163,7 +1271,7 @@ bool MMConfig::sampleFeasibleManiState(const Eigen::Vector3d &car_state,
         std::vector<Eigen::Matrix4d> tf_links;
         if (use_urdf_collision_mesh_ && urdf_collision_model_ &&
             getUrdfLinkTransforms(q, tf_links)) {
-            for (size_t i = 1; i < tf_links.size(); ++i) {
+            for (size_t i = 1; i <= static_cast<size_t>(manipulator_dof_); ++i) {
                 const std::string link = "Link" + std::to_string(i);
                 for (const auto &p : urdf_collision_model_->linkSamples(link)) {
                     height = std::max(height,
@@ -1212,6 +1320,61 @@ bool MMConfig::solveEndEffectorIK(const Eigen::Vector3d &target_position,
     return true;
 }
 
+bool MMConfig::solveEndEffectorPositionIK(const Eigen::Vector3d &target_position,
+                                          const Eigen::VectorXd &seed,
+                                          Eigen::VectorXd &solution) const {
+    if (!urdf_fk_ready_ || !urdf_fk_solver_ || seed.size() != manipulator_dof_)
+        return false;
+    KDL::JntArray q_seed(manipulator_dof_), q_out(manipulator_dof_);
+    for (int i = 0; i < manipulator_dof_; ++i)
+        q_seed(i) = seed(i);
+    // Position-dominant task-space weights: 1 m for translation, 1 cm for
+    // rotation.  The LM solver then reaches the point with an (almost) free
+    // tool orientation instead of forcing an arbitrary target rotation.
+    Eigen::Matrix<double, 6, 1> L;
+    L << 1.0, 1.0, 1.0, 0.01, 0.01, 0.01;
+    KDL::ChainIkSolverPos_LMA solver(urdf_chain_, L, 1.0e-6, 800, 1.0e-12);
+    // The requested point is the geometric center of gripper.stl, not the
+    // arm_gripper_link frame origin.  Recompute the link-origin target after
+    // each solve because the center offset rotates with the gripper frame.
+    const Eigen::Vector3d center_offset = getEndEffectorCenterOffset();
+    Eigen::Vector3d link_target = target_position;
+    for (int iter = 0; iter < 4; ++iter) {
+        KDL::Frame target(KDL::Vector(link_target.x(), link_target.y(), link_target.z()));
+        if (solver.CartToJnt(q_seed, target, q_out) < 0)
+            return false;
+        KDL::Frame solved_frame;
+        if (urdf_fk_solver_->JntToCart(q_out, solved_frame) < 0)
+            return false;
+        Eigen::Matrix3d R = Eigen::Matrix3d::Identity();
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 3; ++c) R(r, c) = solved_frame.M(r, c);
+        const Eigen::Vector3d solved_center =
+            Eigen::Vector3d(solved_frame.p.x(), solved_frame.p.y(), solved_frame.p.z()) +
+            R * center_offset;
+        if ((solved_center - target_position).norm() < 1.0e-4)
+            break;
+        link_target = target_position - R * center_offset;
+        q_seed = q_out;
+    }
+    solution.resize(manipulator_dof_);
+    for (int i = 0; i < manipulator_dof_; ++i) {
+        // LMA does not enforce joint limits; reject limit-violating solutions.
+        if (q_out(i) < manipulator_min_pos_(i) - 1.0e-6 ||
+            q_out(i) > manipulator_max_pos_(i) + 1.0e-6)
+            return false;
+        solution(i) = q_out(i);
+    }
+    return true;
+}
+
+Eigen::Vector3d MMConfig::getEndEffectorCenterOffset() const {
+    // Bounding-box center of ir100_description/meshes/gripper.stl in the
+    // arm_gripper_link local frame.  The URDF link origin is not the mesh
+    // center, so Cartesian goals must account for this fixed offset.
+    return Eigen::Vector3d(-0.0183238, 0.0, 0.0996385);
+}
+
 double MMConfig::urdfManiObstacleCost(const Eigen::Vector3d &car_state,
                                       const Eigen::VectorXd &mani_state,
                                       bool safe) const {
@@ -1246,11 +1409,11 @@ double MMConfig::urdfManiSelfCollisionCost(const Eigen::VectorXd &mani_state,
         !urdf_fk_solver_ || mani_state.size() != manipulator_dof_)
         return 0.0;
     std::vector<Eigen::Matrix4d> tf;
-    if (!getUrdfLinkTransforms(mani_state, tf) || tf.size() < 7)
+    if (!getUrdfLinkTransforms(mani_state, tf) || tf.size() < 8)
         return 0.0;
 
     static const char *names[] = {"arm_base_link", "Link1", "Link2", "Link3",
-                                  "Link4", "Link5", "Link6"};
+                                  "Link4", "Link5", "Link6", "arm_gripper_link"};
     // Keep a small buffer above the hard-check tolerance so the optimizer
     // drives the links clear instead of resting exactly on the contact limit.
     const double margin = (safe ? self_safe_margin_ : collision_mesh_contact_tolerance_);
@@ -1277,8 +1440,8 @@ double MMConfig::urdfManiSelfCollisionCost(const Eigen::VectorXd &mani_state,
 
     double cost = 0.0;
     // Arm self-collision: skip directly adjacent links and the fixed mount.
-    for (size_t i = 1; i < 7; ++i)
-        for (size_t j = i + 2; j < 7; ++j)
+    for (size_t i = 1; i < 8; ++i)
+        for (size_t j = i + 2; j < 8; ++j)
             cost += clearance_cost(names[i], tf[i], names[j], tf[j]);
 
     // Arm versus mobile base (base_link samples live in the same body frame).
@@ -1670,7 +1833,7 @@ void MMConfig::visMesh(ros::Publisher &pub, int id, std::string ns, double alpha
     meshMarker.id = id;
     meshMarker.type = visualization_msgs::Marker::MESH_RESOURCE;
     meshMarker.action = visualization_msgs::Marker::ADD;
-    meshMarker.mesh_use_embedded_materials = true;
+    meshMarker.mesh_use_embedded_materials = false;
     meshMarker.pose.position.x = T(0, 3);
     meshMarker.pose.position.y = T(1, 3);
     meshMarker.pose.position.z = T(2, 3);
@@ -1691,6 +1854,9 @@ void MMConfig::visMesh(ros::Publisher &pub, int id, std::string ns, double alpha
     // meshMarker.color.r = color_rgb(2);
     if(alpha >= 0.0)
         meshMarker.color.a = alpha;
+    meshMarker.color.r = 0.70;
+    meshMarker.color.g = 0.70;
+    meshMarker.color.b = 0.70;
     meshMarker.mesh_resource = mesh_file;
     pub.publish(meshMarker);
 }
@@ -1706,7 +1872,7 @@ visualization_msgs::Marker MMConfig::getMarker(int id, std::string ns, double al
     meshMarker.id = id;
     meshMarker.type = visualization_msgs::Marker::MESH_RESOURCE;
     meshMarker.action = visualization_msgs::Marker::ADD;
-    meshMarker.mesh_use_embedded_materials = true;
+    meshMarker.mesh_use_embedded_materials = false;
     meshMarker.pose.position.x = T(0, 3);
     meshMarker.pose.position.y = T(1, 3);
     meshMarker.pose.position.z = T(2, 3);
@@ -1719,6 +1885,9 @@ visualization_msgs::Marker MMConfig::getMarker(int id, std::string ns, double al
     meshMarker.scale.z = 1.0;
     if(alpha >= 0.0)
         meshMarker.color.a = alpha;
+    meshMarker.color.r = 0.70;
+    meshMarker.color.g = 0.70;
+    meshMarker.color.b = 0.70;
     meshMarker.mesh_resource = mesh_file;
     return meshMarker;
 }

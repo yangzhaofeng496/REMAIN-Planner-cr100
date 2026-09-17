@@ -100,7 +100,8 @@ namespace mani_sample {
                                uint32_t rng_seed,
                                const ManiIkFn &ik,
                                std::vector<LayerIkCandidate> &out,
-                               LayerIkStats &stats);
+                               LayerIkStats &stats,
+                               const std::function<bool(const Eigen::Vector3d &, const Eigen::VectorXd &, int &)> &accept = nullptr);
 
   // Mobile-base pose as a function of the normalized fraction along a joint
   // transition (0 = from-layer, 1 = to-layer).

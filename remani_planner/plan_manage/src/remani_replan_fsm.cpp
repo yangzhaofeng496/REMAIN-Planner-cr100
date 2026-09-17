@@ -31,6 +31,15 @@ namespace remani_planner
     nh.param("mm/mobile_base_dof", mobile_base_dim_, -1);
     nh.param("mm/manipulator_dof", manipulator_dim_, -1);
     nh.param("mm/mobile_base_non_singul_vel", mobile_base_non_singul_vel_, -1.0);
+
+    // 3D end-effector goal via /clicked_point.
+    nh.param("fsm/ee_goal_reach_xy_min", ee_goal_reach_xy_min_, 0.25);
+    nh.param("fsm/ee_goal_reach_xy_max", ee_goal_reach_xy_max_, 1.10);
+    nh.param("fsm/ee_goal_standoff", ee_goal_standoff_, 0.75);
+    nh.param("fsm/ee_goal_clearance", ee_goal_clearance_, 0.05);
+    nh.param("fsm/ee_goal_z_min", ee_goal_z_min_, 0.15);
+    nh.param("fsm/ee_goal_z_max", ee_goal_z_max_, 2.00);
+    nh.param("fsm/ee_goal_ik_samples", ee_goal_ik_samples_, 30);
     
 
     traj_dim_ = mobile_base_dim_ + manipulator_dim_;
@@ -89,7 +98,15 @@ namespace remani_planner
     // manually driving the base/arm).  Publishes -1 when clear, otherwise the
     // collision type: 0 car-env, 1 arm-env, 2 arm-car, 3 arm-arm.
     collision_type_pub_ = nh.advertise<std_msgs::Int32>("collision_type", 1, true);
+    collision_marker_pub_ = nh.advertise<visualization_msgs::MarkerArray>("collision_markers", 1, true);
+    gray_model_pub_ = nh.advertise<visualization_msgs::MarkerArray>("gray_robot_model", 1, true);
     watch_timer_ = nh.createTimer(ros::Duration(0.1), &REMANIReplanFSM::collisionWatchCallback, this);
+    recovery_timer_ = nh.createTimer(ros::Duration(0.05), &REMANIReplanFSM::recoveryCallback, this);
+    recovery_timer_.stop();
+    recovery_joint_pub_ = nh.advertise<control_msgs::JointTrajectoryControllerState>(
+        "/mm_controller_node/recovery_joint_cmd", 1);
+    recovery_car_pub_ = nh.advertise<geometry_msgs::Twist>(
+        "/mm_controller_node/recovery_car_cmd", 1);
 
     odom_sub_ = nh.subscribe("odom_world", 1, &REMANIReplanFSM::mmCarOdomCallback, this);
     joint_state_sub_ = nh.subscribe("joint_state", 1, &REMANIReplanFSM::mmManiOdomCallback, this);
@@ -107,6 +124,8 @@ namespace remani_planner
         nh.advertise<nav_msgs::Path>("/remani_planner/actual_ee_path", 1, true);
     resetEePath(actual_ee_path_, "world", ros::Time::now());
     waypoint_sub_ = nh.subscribe("/move_base_simple/goal", 1, &REMANIReplanFSM::waypointCallback, this);
+    ee_goal_sub_ = nh.subscribe("/clicked_point", 1, &REMANIReplanFSM::eeGoalCallback, this);
+    ee_goal_marker_pub_ = nh.advertise<visualization_msgs::Marker>("ee_goal_marker", 1, true);
     
   }
 
@@ -386,6 +405,14 @@ namespace remani_planner
     std_msgs::Int32 msg;
     msg.data = coll ? coll_type : -1;
     collision_type_pub_.publish(msg);
+    visualization_msgs::MarkerArray collision_markers;
+    planner_manager_->mm_config_->getSelfCollisionMarkers(car_state, mani_state, collision_markers);
+    collision_marker_pub_.publish(collision_markers);
+    visualization_msgs::MarkerArray gray_model;
+    planner_manager_->mm_config_->getMMMarkerArray(gray_model, "gray_robot_model", 0, 1.0,
+                                                    car_state, mani_state, true);
+    gray_model.markers.push_back(planner_manager_->mm_config_->getArmGripperMarker(car_state, mani_state));
+    gray_model_pub_.publish(gray_model);
     if (coll && coll_type != last_collision_type_){
       ROS_WARN("[CollisionWatch] COLLISION type=%d (0 car-env, 1 arm-env, 2 arm-car, 3 arm-arm)", coll_type);
       ROS_WARN_STREAM("[CollisionWatch] actual car=(" << car_state.transpose()
@@ -524,6 +551,307 @@ namespace remani_planner
 
     planNextWaypoint(end_pt_, end_yaw_);
     return;
+  }
+
+  // RViz Publish Point -> /clicked_point.  Treat the clicked world point as the
+  // desired arm end-effector position, choose a mobile-base goal that brings
+  // the point into the arm workspace, solve IK (position primary, orientation
+  // sampled) and hand the resulting joint goal to the normal planning pipeline.
+  void REMANIReplanFSM::eeGoalCallback(const geometry_msgs::PointStamped::ConstPtr &msg)
+  {
+    if (!msg->header.frame_id.empty() && msg->header.frame_id != "world")
+    {
+      ROS_WARN("[FSM] /clicked_point frame '%s' != world; ignoring",
+               msg->header.frame_id.c_str());
+      return;
+    }
+
+    const Eigen::Vector3d target(msg->point.x, msg->point.y, msg->point.z);
+    ROS_WARN("[FSM] ee-goal clicked: (%.3f %.3f %.3f)", target.x(), target.y(), target.z());
+
+    if (exec_state_ == EXEC_TRAJ || have_local_traj_) {
+      ROS_WARN("[FSM] preempting previous trajectory for newest ee-goal");
+      callEmergencyStop(mm_state_pos_, mm_car_yaw_, mm_car_singul_);
+      have_local_traj_ = false;
+      have_target_ = false;
+      have_new_target_ = true;
+      changeFSMExecState(WAIT_TARGET, "NEW_EE_GOAL");
+    }
+
+    visualization_msgs::Marker marker;
+    marker.header.frame_id = "world";
+    marker.header.stamp = ros::Time::now();
+    marker.ns = "ee_goal";
+    marker.id = 0;
+    marker.type = visualization_msgs::Marker::SPHERE;
+    marker.action = visualization_msgs::Marker::ADD;
+    marker.pose.position.x = target.x();
+    marker.pose.position.y = target.y();
+    marker.pose.position.z = target.z();
+    marker.pose.orientation.w = 1.0;
+    marker.scale.x = marker.scale.y = marker.scale.z = 0.12;
+    marker.color.r = 1.0;
+    marker.color.g = 0.2;
+    marker.color.b = 0.2;
+    marker.color.a = 1.0;
+    ee_goal_marker_pub_.publish(marker);
+
+    int current_collision = -1;
+    const Eigen::Vector3d current_car(mm_state_pos_(0), mm_state_pos_(1), mm_car_yaw_);
+    const Eigen::VectorXd current_arm = mm_state_pos_.tail(manipulator_dim_);
+    if (planner_manager_->mm_config_->checkcollision(current_car, current_arm, false,
+                                                      current_collision)) {
+      Eigen::VectorXd recovery_q;
+      bool recovery_found = false;
+      // Search a small coupled base/arm neighborhood.  A colliding arm can
+      // be unrecoverable at the current base pose even when a nearby base
+      // pose has a valid self-collision-free arm posture.
+      const double offsets[] = {0.0, 0.25, -0.25, 0.50, -0.50};
+      const double yaw_offsets[] = {0.0, 0.35, -0.35, 0.70, -0.70};
+      for (double dx : offsets) {
+        for (double dy : offsets) {
+          for (double dyaw : yaw_offsets) {
+            Eigen::Vector3d candidate_car = current_car;
+            candidate_car.x() += dx;
+            candidate_car.y() += dy;
+            candidate_car.z() += dyaw;
+            if (planner_manager_->mm_config_->sampleFeasibleManiState(
+                    candidate_car, recovery_q, 40)) {
+              recovery_car_goal_ = candidate_car;
+              recovery_found = true;
+              break;
+            }
+          }
+          if (recovery_found) break;
+        }
+        if (recovery_found) break;
+      }
+      if (!recovery_found) {
+        ROS_ERROR("[Recovery] no safe arm posture found; refusing ee-goal");
+        return;
+      }
+      pending_ee_goal_ = target;
+      recovery_joint_goal_ = recovery_q;
+      recovery_active_ = true;
+      recovery_deadline_ = ros::Time::now() + ros::Duration(5.0);
+      recovery_timer_.start();
+      ROS_WARN("[Recovery] current collision type=%d; moving arm to a safe posture before replanning",
+               current_collision);
+      return;
+    }
+
+    planToEeGoal(target);
+  }
+
+  void REMANIReplanFSM::recoveryCallback(const ros::TimerEvent &)
+  {
+    if (!recovery_active_) return;
+    if (!have_odom_ || recovery_joint_goal_.size() != manipulator_dim_) return;
+
+    const Eigen::Vector3d car(mm_state_pos_(0), mm_state_pos_(1), mm_car_yaw_);
+    int collision_type = -1;
+    const bool still_colliding = planner_manager_->mm_config_->checkcollision(
+        car, mm_state_pos_.tail(manipulator_dim_), false, collision_type);
+    if (!still_colliding) {
+      recovery_active_ = false;
+      recovery_timer_.stop();
+      ROS_WARN("[Recovery] arm is SAFE; replanning pending ee-goal (%.3f %.3f %.3f)",
+               pending_ee_goal_.x(), pending_ee_goal_.y(), pending_ee_goal_.z());
+      planToEeGoal(pending_ee_goal_);
+      return;
+    }
+    if (ros::Time::now() > recovery_deadline_) {
+      recovery_active_ = false;
+      recovery_timer_.stop();
+      ROS_ERROR("[Recovery] failed to leave self-collision within 5 seconds (type=%d)",
+                collision_type);
+      return;
+    }
+
+    geometry_msgs::Twist car_cmd;
+    car_cmd.linear.x = recovery_car_goal_.x();
+    car_cmd.linear.y = recovery_car_goal_.y();
+    car_cmd.linear.z = recovery_car_goal_.z();
+    recovery_car_pub_.publish(car_cmd);
+
+    control_msgs::JointTrajectoryControllerState cmd;
+    cmd.joint_names.resize(manipulator_dim_);
+    cmd.desired.positions.resize(manipulator_dim_);
+    cmd.desired.velocities.assign(manipulator_dim_, 0.0);
+    cmd.desired.effort.assign(manipulator_dim_, 0.0);
+    for (int i = 0; i < manipulator_dim_; ++i) {
+      cmd.joint_names[i] = "joint" + std::to_string(i + 1);
+      cmd.desired.positions[i] = recovery_joint_goal_(i);
+    }
+    recovery_joint_pub_.publish(cmd);
+  }
+
+  bool REMANIReplanFSM::planToEeGoal(const Eigen::Vector3d &target_world)
+  {
+    const ros::WallTime goal_start = ros::WallTime::now();
+    if (target_type_ != TARGET_TYPE::MANUAL_TARGET)
+    {
+      ROS_WARN("[FSM] ee-goal ignored: target_type is not manual");
+      return false;
+    }
+    if (!have_odom_ || !planner_manager_ || !planner_manager_->mm_config_)
+    {
+      ROS_WARN("[FSM] ee-goal rejected: odom/planner not ready");
+      return false;
+    }
+    if (mm_state_pos_.size() < traj_dim_)
+    {
+      ROS_WARN("[FSM] ee-goal rejected: state not ready");
+      return false;
+    }
+    if (planner_manager_->grid_map_ && planner_manager_->grid_map_->usesGlobalMap() &&
+        !planner_manager_->grid_map_->isGlobalMapReady())
+    {
+      ROS_WARN("[FSM] ee-goal rejected: static global map is not ready yet");
+      return false;
+    }
+
+    const Eigen::Vector2d base_xy(mm_state_pos_(0), mm_state_pos_(1));
+    const double base_yaw = mm_car_yaw_;
+    const Eigen::Vector2d target_xy(target_world.x(), target_world.y());
+
+    const Eigen::Vector2d to_target = target_xy - base_xy;
+    const double dist = to_target.norm();
+    Eigen::Vector2d dir;
+    if (dist > 1e-3)
+      dir = to_target / dist;
+    else
+      dir = Eigen::Vector2d(std::cos(base_yaw), std::sin(base_yaw));
+
+    if (target_world.z() < ee_goal_z_min_ || target_world.z() > ee_goal_z_max_)
+    {
+      ROS_ERROR("[FSM] ee-goal z=%.3f outside [%.2f, %.2f]",
+                target_world.z(), ee_goal_z_min_, ee_goal_z_max_);
+      return false;
+    }
+
+    // Standoff candidates: place the base so the point sits at the preferred
+    // arm reach.  Deliberately avoid a zero-motion base goal: the coupled
+    // sampler needs at least a short mobile-base path to reconfigure the arm,
+    // so a purely stationary base makes the arm-only search return NO_PATH.
+    std::vector<double> standoffs;
+    const double kMinBaseMove = 0.10;
+    const double offsets[] = {0.0, 0.15, -0.15, 0.30, -0.30, 0.45, -0.45};
+    for (double o : offsets)
+    {
+      double s = ee_goal_standoff_ + o;
+      s = std::max(ee_goal_reach_xy_min_, std::min(ee_goal_reach_xy_max_, s));
+      if (std::abs(s - dist) < kMinBaseMove)
+        continue;
+      bool dup = false;
+      for (double e : standoffs)
+        if (std::abs(e - s) < 1e-3)
+          dup = true;
+      if (!dup)
+        standoffs.push_back(s);
+    }
+    // Last resort: keep the current base position when the point is in reach.
+    if (dist >= ee_goal_reach_xy_min_ && dist <= ee_goal_reach_xy_max_)
+    {
+      bool dup = false;
+      for (double e : standoffs)
+        if (std::abs(e - dist) < 1e-3)
+          dup = true;
+      if (!dup)
+        standoffs.push_back(dist);
+    }
+
+    // Try to reach the clicked point exactly first; only pull the IK target
+    // back toward the base when the exact point has no collision-free IK (for
+    // points picked on an obstacle surface).
+    std::vector<double> clearances;
+    clearances.push_back(0.0);
+    if (ee_goal_clearance_ > 1e-6)
+      clearances.push_back(ee_goal_clearance_);
+
+    const Eigen::VectorXd ik_seed = mm_state_pos_.tail(manipulator_dim_);
+
+    for (double clearance : clearances)
+    {
+      const Eigen::Vector3d reach_world =
+          target_world - Eigen::Vector3d(clearance * dir.x(), clearance * dir.y(), 0.0);
+      for (double standoff : standoffs)
+      {
+        const Eigen::Vector2d goal_xy = target_xy - standoff * dir;
+        const Eigen::Vector2d goal_to_target = target_xy - goal_xy;
+        double goal_yaw = base_yaw;
+        if (goal_to_target.norm() > 1e-3)
+          goal_yaw = std::atan2(goal_to_target.y(), goal_to_target.x());
+        const Eigen::Vector3d car_state(goal_xy.x(), goal_xy.y(), goal_yaw);
+
+        Eigen::Matrix4d T_car;
+        planner_manager_->mm_config_->CarState2T(car_state, T_car);
+        const Eigen::Vector3d p_base =
+            T_car.block<3, 3>(0, 0).transpose() *
+            (reach_world - T_car.block<3, 1>(0, 3));
+
+        // LM is a local solver: try the measured posture first, then a set of
+        // collision-free sampled postures at this base goal as alternative seeds.
+        std::vector<Eigen::VectorXd, Eigen::aligned_allocator<Eigen::VectorXd>> seeds;
+        // Try independently sampled collision-free postures first. The
+        // measured posture is a useful fallback, but preferring it can force
+        // the subsequent coupled trajectory through a Link3-Link5 self-
+        // collision even when another IK branch is available.
+        for (int k = 0; k < ee_goal_ik_samples_; ++k)
+        {
+          Eigen::VectorXd s;
+          if (planner_manager_->mm_config_->sampleFeasibleManiState(car_state, s, 40))
+            seeds.push_back(s);
+        }
+        seeds.push_back(ik_seed);
+
+        for (const auto &s : seeds)
+        {
+          const ros::WallTime arm_ik_start = ros::WallTime::now();
+          Eigen::VectorXd q;
+          if (!planner_manager_->mm_config_->solveEndEffectorPositionIK(p_base, s, q))
+            continue;
+          if (q.size() != manipulator_dim_)
+            continue;
+          // LM only minimises a weighted task error, so verify the achieved
+          // end-effector position before accepting the joint goal.
+          Eigen::Matrix4d T_ee;
+          if (!planner_manager_->computeUrdfEeTransform(q, T_ee))
+            continue;
+          const Eigen::Vector3d ee_center =
+              T_ee.block<3, 1>(0, 3) +
+              T_ee.block<3, 3>(0, 0) *
+              planner_manager_->mm_config_->getEndEffectorCenterOffset();
+          if ((ee_center - p_base).norm() > 2e-3)
+            continue;
+          int coll_type = -1;
+          if (planner_manager_->mm_config_->checkcollision(car_state, q, false, coll_type))
+          {
+            ROS_INFO("[FSM] ee-goal IK candidate rejected (collision type=%d)", coll_type);
+            continue;
+          }
+
+          end_pt_ = Eigen::VectorXd::Zero(traj_dim_);
+          end_pt_(0) = car_state(0);
+          end_pt_(1) = car_state(1);
+          end_pt_.tail(manipulator_dim_) = q;
+          end_yaw_ = car_state(2);
+          ROS_WARN("[FSM] ee-goal solved: target=(%.3f %.3f %.3f) base=(%.3f %.3f %.3f) "
+                   "standoff=%.3f clearance=%.3f",
+                   target_world.x(), target_world.y(), target_world.z(),
+                   car_state(0), car_state(1), car_state(2),
+                   standoff, clearance);
+          ROS_INFO("[PLAN_TIME] base_ik_select_ms=%.3f arm_ik_ms=%.3f",
+                   (ros::WallTime::now() - goal_start).toSec() * 1000.0,
+                   (ros::WallTime::now() - arm_ik_start).toSec() * 1000.0);
+          return planNextWaypoint(end_pt_, end_yaw_);
+        }
+      }
+    }
+
+    ROS_ERROR("[FSM] ee-goal: no reachable collision-free IK for target=(%.3f %.3f %.3f)",
+              target_world.x(), target_world.y(), target_world.z());
+    return false;
   }
 
   void REMANIReplanFSM::mmCarOdomCallback(const nav_msgs::OdometryConstPtr &msg)
@@ -818,9 +1146,8 @@ namespace remani_planner
         // start_pos_ is a predicted replan state when a local trajectory is
         // active.  RViz must start at the measured robot state instead.
         mm_state_pos_, mm_car_yaw_);
-    ROS_INFO("[WarmStart profile] requested=%s success=%s init_ms=%.3f opt_ms=%.3f",
-             (!flag_use_poly_init) ? "true" : "false", plan_success ? "true" : "false",
-             init_time, opt_time);
+    ROS_INFO("[PLAN_TIME] remain_frontend_ms=%.3f remain_optimizer_ms=%.3f remain_total_ms=%.3f success=%s",
+             init_time, opt_time, init_time + opt_time, plan_success ? "true" : "false");
     have_new_target_ = false;
 
     if (plan_success){

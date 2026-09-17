@@ -73,6 +73,11 @@ namespace remani_planner
         bool checkManicollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_state, bool safe);
         bool checkcollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_state, bool safe);
         bool checkcollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_state, bool safe, int &coll_type /*0: car, 1: mani, 2: car-mani, 3: mani-mani*/);
+        void getSelfCollisionMarkers(const Eigen::Vector3d &car_state,
+                                     const Eigen::VectorXd &mani_state,
+                                     visualization_msgs::MarkerArray &markers) const;
+        visualization_msgs::Marker getArmGripperMarker(const Eigen::Vector3d &car_state,
+                                                       const Eigen::VectorXd &mani_state) const;
         bool usesUrdfCollisionMesh() const { return use_urdf_collision_mesh_ && urdf_fk_ready_; }
         double urdfManiObstacleCost(const Eigen::Vector3d &car_state,
                                     const Eigen::VectorXd &mani_state,
@@ -121,6 +126,13 @@ namespace remani_planner
                                 const Eigen::Matrix3d &target_rotation,
                                 const Eigen::VectorXd &seed,
                                 Eigen::VectorXd &solution) const;
+        // Position-only IK with a Levenberg-Marquardt solver.  Orientation is
+        // only weakly weighted so a clicked point can be reached with any tool
+        // orientation; the result is rejected when it violates joint limits.
+        bool solveEndEffectorPositionIK(const Eigen::Vector3d &target_position,
+                                         const Eigen::VectorXd &seed,
+                                         Eigen::VectorXd &solution) const;
+        Eigen::Vector3d getEndEffectorCenterOffset() const;
         
     private:
         std::vector<Eigen::Vector3d> color_set_;

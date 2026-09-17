@@ -153,6 +153,16 @@ namespace poly_traj
         inline double getCarAngle(const double &t) const
         {
             Eigen::Vector2d vel = getVel(t).head(2);
+            // At a stationary endpoint atan2(0, 0) loses the base heading.
+            // Use the last non-zero velocity sample so collision checks and
+            // visualization preserve the terminal nonholonomic orientation.
+            if (vel.norm() < 1.0e-4 && t > 1.0e-6) {
+                // Quintic time scaling can make several samples near the
+                // endpoint effectively stationary. Walk back until the
+                // segment direction is recoverable.
+                for (int k = 1; k <= 100 && vel.norm() < 1.0e-4; ++k)
+                    vel = getVel(std::max(0.0, t - 0.01 * k)).head(2);
+            }
             return std::atan2(singul * vel(1), singul * vel(0)); //[-PI, PI]
         }
 
@@ -1063,6 +1073,8 @@ namespace poly_traj
         Eigen::VectorXd T7;
         // Eigen::Matrix<double, 6, 1> t, tInv;
         Eigen::MatrixXd gdC;
+        bool linear_override = false;
+        Trajectory<7> linear_traj;
         // double gdT;
         /*MINCO descrips*/
         // Eigen::MatrixXd gdHead;
@@ -1227,6 +1239,7 @@ namespace poly_traj
     public:
         inline void reset(const int &pieceNum)
         {
+            linear_override = false;
             N = pieceNum;
             A.create(8 * N, 8, 8);
             b.resize(8 * N, traj_dim_);
@@ -1368,6 +1381,7 @@ namespace poly_traj
                           const Eigen::MatrixXd &tailState,
                           const int &pieceNum)
         {
+            linear_override = false;
             N = pieceNum;
             headPVAJ = headState;
             tailPVAJ = tailState;
@@ -1504,6 +1518,40 @@ namespace poly_traj
             return;
         }
 
+        // Build a trajectory whose position is exactly linear on every
+        // waypoint interval.  This is used by the fixed locomotive planner
+        // after coupled IK; unlike minimum-snap interpolation it cannot
+        // overshoot a collision-checked joint waypoint.
+        inline void generateLinear(const Eigen::MatrixXd &inPs,
+                                   const Eigen::VectorXd &ts,
+                                   int s)
+        {
+            linear_traj.clear();
+            linear_traj.reserve(N);
+            Eigen::MatrixXd points(traj_dim_, N + 1);
+            points.col(0) = headPVAJ.col(0);
+            for (int i = 0; i < N - 1; ++i) points.col(i + 1) = inPs.col(i);
+            points.col(N) = tailPVAJ.col(0);
+            for (int i = 0; i < N; ++i) {
+                typename Piece<7>::CoefficientMat c;
+                // Preserve the already generated base polynomial (and its
+                // yaw derived from the original base velocity).  Replacing
+                // x/y with a straight line changes the base orientation used
+                // by collision checking.  Only the manipulator rows are
+                // replaced with exact linear interpolation.
+                c = b.block(8 * i, 0, 8, traj_dim_).transpose()
+                       .rowwise().reverse();
+                constexpr int base_dof = 2;
+                c.block(base_dof, 0, traj_dim_ - base_dof, 8).setZero();
+                c.block(base_dof, 7, traj_dim_ - base_dof, 1) =
+                    points.col(i).tail(traj_dim_ - base_dof);
+                c.block(base_dof, 6, traj_dim_ - base_dof, 1) =
+                    (points.col(i + 1) - points.col(i)).tail(traj_dim_ - base_dof) / ts(i);
+                linear_traj.emplace_back(ts(i), c, s);
+            }
+            linear_override = true;
+        }
+
         inline const Eigen::MatrixXd &get_b() const
         {
             return b;
@@ -1565,6 +1613,7 @@ namespace poly_traj
 
         inline Trajectory<7> getTraj(int s) const
         {
+            if (linear_override) return linear_traj;
             Trajectory<7> traj;
             traj.reserve(N);
             for (int i = 0; i < N; i++)

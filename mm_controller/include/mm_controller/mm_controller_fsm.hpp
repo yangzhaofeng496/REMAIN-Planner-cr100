@@ -7,6 +7,8 @@
 #include <geometry_msgs/PoseStamped.h>
 #include <nav_msgs/Odometry.h>
 #include <std_msgs/Empty.h>
+#include <geometry_msgs/Twist.h>
+#include <control_msgs/JointTrajectoryControllerState.h>
 #include "mm_controller/controller_utils.hpp"
 #include "mm_controller/polynomial_trajectory.h"
 
@@ -47,6 +49,10 @@ private:
 	int mobile_base_dof_, manipulator_dof_;
 	ros::Publisher traj_start_trigger_pub_;
 	ros::Publisher car_cmd_pub_, mani_cmd_pub_, gripper_cmd_pub_;
+	ros::Subscriber recovery_car_sub_, recovery_joint_sub_;
+	geometry_msgs::Twist recovery_car_cmd_;
+	control_msgs::JointTrajectoryControllerState recovery_joint_cmd_;
+	ros::Time last_recovery_cmd_;
 	State_t fsm_state_; // Should only be changed in PX4CtrlFSM::process() function!
 	Exec_Traj_State_t exec_traj_state_;
 	Eigen::VectorXd init_theta_;
@@ -61,6 +67,8 @@ private:
 	void publish_trigger(const nav_msgs::Odometry &odom_msg);
 	void cal_traj_ctrl_input(double duration);
 	void cal_stay_ctrl_input();
+	void recoveryCarCallback(const geometry_msgs::Twist::ConstPtr &msg);
+	void recoveryJointCallback(const control_msgs::JointTrajectoryControllerState::ConstPtr &msg);
 	void limitErr(Eigen::VectorXd &x, const double x_low, const double x_upp);
 };
 

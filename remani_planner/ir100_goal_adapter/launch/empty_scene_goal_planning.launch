@@ -1,0 +1,20 @@
+<launch>
+  <!-- The planner/controller launch remains the owner of planning and execution. -->
+  <include file="$(find remani_planner)/launch/exp0_ir100_cr10_manual.launch">
+    <arg name="load_map" value="false" />
+    <arg name="planner_param_file" value="$(find remani_planner)/config/remani_planner_param_manual.yaml" />
+    <arg name="use_global_map" value="false" />
+    <arg name="use_load_map" value="false" />
+    <arg name="override_planner_profile" value="true" />
+    <arg name="profile_global_plan" value="false" />
+    <arg name="profile_max_mani_search_time" value="20.0" />
+  </include>
+
+  <node pkg="ir100_goal_adapter" type="ir100_goal_adapter_node"
+        name="ir100_goal_adapter" output="screen">
+    <param name="target_topic" value="/ir100/end_effector_target" />
+    <param name="planner_topic" value="/clicked_point" />
+    <param name="accepted_frame" value="world" />
+    <param name="max_abs_xyz" value="10.0" />
+  </node>
+</launch>

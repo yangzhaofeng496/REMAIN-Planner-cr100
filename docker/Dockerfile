@@ -25,6 +25,8 @@ RUN apt-get update || true \
     ros-noetic-dynamic-reconfigure \
     ros-noetic-geometry-msgs \
     ros-noetic-image-transport \
+    ros-noetic-moveit \
+    ros-noetic-moveit-kinematics \
     ros-noetic-message-generation \
     ros-noetic-message-runtime \
     ros-noetic-nav-msgs \

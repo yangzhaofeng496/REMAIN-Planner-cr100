@@ -36,7 +36,11 @@ STATUS = {-1: "SAFE", 0: "COLLISION car-env", 1: "COLLISION arm-env",
 
 def main():
     rospy.init_node("base_teleop_collision")
-    if rospy.get_param("~kill_controller", True):
+    # Keep mm_controller_node alive so planner trajectories can still be
+    # executed while teleop is active.  Teleop publishes manual setpoints to
+    # fake_mm through the same command topics; killing the controller would
+    # disconnect /planning/trajectory from the simulated robot.
+    if rospy.get_param("~kill_controller", False):
         subprocess.call(["rosnode", "kill", "/mm_controller_node"],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     base_pub = rospy.Publisher("/mm_controller_node/car_cmd", Twist, queue_size=1)

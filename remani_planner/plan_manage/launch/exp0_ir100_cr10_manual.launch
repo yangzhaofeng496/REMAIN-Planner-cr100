@@ -2,7 +2,7 @@
   <arg name="load_map" default="true"/>
   <arg name="exp_param_file" value="$(find remani_planner)/config/exp0_param.yaml"/>
   <arg name="mm_param_file" value="$(find remani_planner)/config/mm_param_ir100_cr10.yaml"/>
-  <arg name="planner_param_file" value="$(find remani_planner)/config/remani_planner_param_manual.yaml"/>
+  <arg name="planner_param_file" default="$(find remani_planner)/config/remani_planner_param_manual.yaml"/>
   <arg name="override_planner_profile" default="false"/>
   <arg name="profile_global_plan" default="true"/>
   <arg name="profile_thresh_no_replan_meter" default="2.5"/>
@@ -22,6 +22,8 @@
   <arg name="profile_lateral_corridor" default="0.3"/>
   <arg name="profile_poly_piece_length" default="2.0"/>
   <arg name="global_map_refresh" default="false"/>
+  <arg name="use_global_map" default="true"/>
+  <arg name="use_load_map" default="true"/>
   <arg name="obstacles_inflation" default="0.15"/>
   <arg name="map_size_x" default="20.0"/>
   <arg name="map_size_y" default="10.0"/>
@@ -55,6 +57,8 @@
     <arg name="profile_lateral_corridor" value="$(arg profile_lateral_corridor)"/>
     <arg name="profile_poly_piece_length" value="$(arg profile_poly_piece_length)"/>
     <arg name="global_map_refresh" value="$(arg global_map_refresh)"/>
+    <arg name="use_global_map" value="$(arg use_global_map)"/>
+    <arg name="use_load_map" value="$(arg use_load_map)"/>
     <arg name="obstacles_inflation" value="$(arg obstacles_inflation)"/>
     <arg name="map_size_x" value="$(arg map_size_x)"/>
     <arg name="map_size_y" value="$(arg map_size_y)"/>

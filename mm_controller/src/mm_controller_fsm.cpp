@@ -20,6 +20,11 @@ MMControllerFSM::MMControllerFSM(const ros::NodeHandle& nh) : nh_(nh){
 	car_cmd_pub_  = nh_.advertise<geometry_msgs::Twist>("car_cmd", 10);
 	mani_cmd_pub_ = nh_.advertise<control_msgs::JointTrajectoryControllerState>("joint_cmd", 10);
 	gripper_cmd_pub_ = nh_.advertise<std_msgs::Bool>("gripper_cmd", 10);
+	recovery_car_sub_ = nh_.subscribe("/mm_controller_node/recovery_car_cmd", 1,
+		&MMControllerFSM::recoveryCarCallback, this);
+	recovery_joint_sub_ = nh_.subscribe("/mm_controller_node/recovery_joint_cmd", 1,
+		&MMControllerFSM::recoveryJointCallback, this);
+	last_recovery_cmd_ = ros::Time(0);
     traj_start_trigger_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/traj_start_trigger", 10);
 
 	state_data.setParam(manipulator_dof_);
@@ -206,6 +211,13 @@ bool MMControllerFSM::state_is_received(const ros::Time &now_time){
 }
 
 void MMControllerFSM::publish_ctrl_cmd(const ros::Time &stamp){
+	if ((ros::Time::now() - last_recovery_cmd_).toSec() < 0.15 &&
+	    !recovery_joint_cmd_.desired.positions.empty()) {
+		car_cmd_pub_.publish(recovery_car_cmd_);
+		recovery_joint_cmd_.header.stamp = stamp;
+		mani_cmd_pub_.publish(recovery_joint_cmd_);
+		return;
+	}
 	geometry_msgs::Twist car_cmd;
 	// true value
 	car_cmd.linear.x = cmd_data.car_true_cmd(0); // x
@@ -224,6 +236,16 @@ void MMControllerFSM::publish_ctrl_cmd(const ros::Time &stamp){
 	}
 	car_cmd_pub_.publish(car_cmd);
 	mani_cmd_pub_.publish(joint_cmd);
+}
+
+void MMControllerFSM::recoveryCarCallback(const geometry_msgs::Twist::ConstPtr &msg){
+	recovery_car_cmd_ = *msg;
+	last_recovery_cmd_ = ros::Time::now();
+}
+
+void MMControllerFSM::recoveryJointCallback(const control_msgs::JointTrajectoryControllerState::ConstPtr &msg){
+	recovery_joint_cmd_ = *msg;
+	last_recovery_cmd_ = ros::Time::now();
 }
 
 void MMControllerFSM::publish_trigger(const nav_msgs::Odometry &odom_msg){

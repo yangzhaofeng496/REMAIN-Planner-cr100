@@ -30,6 +30,9 @@
 #include <tf/tf.h>
 #include <tf/transform_datatypes.h>
 #include <sensor_msgs/JointState.h>
+#include <control_msgs/JointTrajectoryControllerState.h>
+#include <geometry_msgs/PointStamped.h>
+#include <geometry_msgs/Twist.h>
 
 #include <iostream>
 #include <iomanip>
@@ -91,6 +94,12 @@ namespace remani_planner
     int mobile_base_dim_, manipulator_dim_, traj_dim_;
     double mobile_base_non_singul_vel_;
 
+    /* 3D end-effector goal ("click a point in the cloud") */
+    double ee_goal_reach_xy_min_, ee_goal_reach_xy_max_;
+    double ee_goal_standoff_, ee_goal_clearance_;
+    double ee_goal_z_min_, ee_goal_z_max_;
+    int ee_goal_ik_samples_;
+
     /* planning data */
     bool have_trigger_, have_target_, have_odom_, have_new_target_, have_recv_pre_agent_, have_local_traj_;
     FSM_EXEC_STATE exec_state_;
@@ -118,13 +127,25 @@ namespace remani_planner
     ros::NodeHandle node_;
     ros::Timer exec_timer_, safety_timer_;
     ros::Subscriber waypoint_sub_, odom_sub_, joint_state_sub_, gripper_state_sub_, trigger_sub_, assignment_sub_;
+    ros::Subscriber ee_goal_sub_;
     ros::Publisher replan_pub_, new_pub_, poly_traj_pub_, data_disp_pub_, gripper_cmd_pub_, map_state_pub_;
+    ros::Publisher ee_goal_marker_pub_;
 
     ros::Publisher reached_pub_, start_pub_;
 
     ros::Timer watch_timer_;
+    ros::Timer recovery_timer_;
     ros::Publisher collision_type_pub_;
+    ros::Publisher collision_marker_pub_;
+    ros::Publisher gray_model_pub_;
+    ros::Publisher recovery_joint_pub_;
+    ros::Publisher recovery_car_pub_;
     int last_collision_type_{-1};
+    bool recovery_active_{false};
+    ros::Time recovery_deadline_;
+    Eigen::Vector3d pending_ee_goal_{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d recovery_car_goal_{Eigen::Vector3d::Zero()};
+    Eigen::VectorXd recovery_joint_goal_;
 
     // Measured end-effector path built from live base odometry and joint
     // state (red in RViz), plus its publish throttle.
@@ -154,8 +175,13 @@ namespace remani_planner
     void execFSMCallback(const ros::TimerEvent &e);
     void checkCollisionCallback(const ros::TimerEvent &e);
     void collisionWatchCallback(const ros::TimerEvent &e);
+    void recoveryCallback(const ros::TimerEvent &e);
     bool planNextWaypoint(const Eigen::VectorXd next_wp, const double nect_yaw);
     void waypointCallback(const geometry_msgs::PoseStamped::ConstPtr &msg);
+    // Drive the mobile base so the arm end-effector reaches the given world
+    // point (RViz Publish Point on /clicked_point).
+    bool planToEeGoal(const Eigen::Vector3d &target_world);
+    void eeGoalCallback(const geometry_msgs::PointStamped::ConstPtr &msg);
     void mmCarOdomCallback(const nav_msgs::OdometryConstPtr &msg);
     void mmManiOdomCallback(const sensor_msgs::JointStateConstPtr &msg);
     void gripperCallback(const std_msgs::Bool::ConstPtr &msg);

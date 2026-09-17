@@ -82,7 +82,8 @@ struct ScopedSampleTiming {
                                uint32_t rng_seed,
                                const ManiIkFn &ik,
                                std::vector<LayerIkCandidate> &out,
-                               LayerIkStats &stats) {
+                               LayerIkStats &stats,
+                               const std::function<bool(const Eigen::Vector3d &, const Eigen::VectorXd &, int &)> &accept) {
     out.clear();
     stats = LayerIkStats();
     if (manipulator_dof <= 0 || samples_per_layer <= 0 ||
@@ -95,6 +96,8 @@ struct ScopedSampleTiming {
     std::mt19937 rng(rng_seed);
     std::uniform_real_distribution<double> uxy(-radius_xy, radius_xy);
     std::uniform_real_distribution<double> uz(z_min, z_max);
+    // Keep retries local to the previous IK posture so they remain
+    // connectable within one base layer.
     std::uniform_real_distribution<double> da(-1.20, 1.20);
 
     for (int attempt = 0; attempt < samples_per_layer; ++attempt) {
@@ -129,8 +132,18 @@ struct ScopedSampleTiming {
       LayerIkCandidate candidate;
       candidate.ee_position = target;
       candidate.joint_state = solution;
+      if (accept) {
+        int collision_type = -1;
+        if (!accept(target, solution, collision_type)) continue;
+      }
+      // A collision-free IK pose is not sufficient: it must also be
+      // reachable from the previous layer by a collision-free joint
+      // interpolation.  Stop at the first candidate satisfying both tests.
+      // The generic sampler does not own the layer timing/base trajectory, so
+      // this extra gate is applied by sampleLayerCandidates below.
       out.push_back(candidate);
       ++stats.accepted;
+      if (accept) return true;
     }
     return stats.accepted > 0;
   }
@@ -193,13 +206,16 @@ struct ScopedSampleTiming {
     Eigen::Vector3d center(0.0, 0.0, 0.75);
     Eigen::Matrix3d rotation = Eigen::Matrix3d::Identity();
     Eigen::VectorXd ik_seed = seed;
+    // Keep the Cartesian center tied to the previous accepted posture, while
+    // allowing IK to start from a nearby feasible posture if the previous
+    // one is close to a collision boundary.
     Eigen::VectorXd free_seed;
-    if (mm_config_->sampleFeasibleManiState(car_state_list_[layer], free_seed, 24) &&
+    if (mm_config_->sampleFeasibleManiState(car_state_list_[layer], free_seed, 8) &&
         free_seed.size() == manipulator_dof_) {
       ik_seed = free_seed;
     }
     std::vector<Eigen::Matrix4d> seed_tf;
-    if (mm_config_->getUrdfLinkTransforms(ik_seed, seed_tf) && !seed_tf.empty()) {
+    if (mm_config_->getUrdfLinkTransforms(seed, seed_tf) && !seed_tf.empty()) {
       center = seed_tf.back().block<3, 1>(0, 3);
       rotation = seed_tf.back().block<3, 3>(0, 0);
       center.z() = std::min(center.z(), 0.75);
@@ -208,7 +224,9 @@ struct ScopedSampleTiming {
     std::vector<LayerIkCandidate> ik_candidates;
     LayerIkStats stats;
     const uint32_t layer_seed =
-        0x5EED0000u ^ static_cast<uint32_t>(layer * 2654435761u);
+        0x5EED0000u ^ static_cast<uint32_t>(layer * 2654435761u) ^
+        static_cast<uint32_t>((collision_check_calls_ + 1) * 2246822519u);
+    const ManiPathNodePtr previous = layer > 0 ? initNode(layer - 1, seed) : nullptr;
     sampleLayerIkCandidates(
         center, rotation, ik_seed, manipulator_dof_, min_joint_pos_, max_joint_pos_,
         cartesian_samples_per_layer_, cartesian_sample_radius_xy_,
@@ -217,7 +235,13 @@ struct ScopedSampleTiming {
                const Eigen::VectorXd &s, Eigen::VectorXd &out) {
           return mm_config_->solveEndEffectorIK(p, r, s, out);
         },
-        ik_candidates, stats);
+        ik_candidates, stats,
+        [this, layer, previous](const Eigen::Vector3d &, const Eigen::VectorXd &q, int &) {
+          if (previous == nullptr) return false;
+          const ManiPathNodePtr node = initNode(layer, q);
+          return node->node_state != ManiPathNode::NODE_STATE::COLLISION &&
+                 connectLayerCandidates(layer, previous, node);
+        });
 
     const std::array<size_t, 4> collision_before = collision_type_counts_;
     for (auto &candidate : ik_candidates) {
@@ -229,6 +253,10 @@ struct ScopedSampleTiming {
       }
       publishCartesianSample(candidate.ee_position, car_state_list_[layer], 1);
       candidates.push_back(node);
+      // Fixed locomotive scene: one fully collision-checked IK state is
+      // sufficient for this layer.  Continuing to sample only adds IK and
+      // collision-check cost and does not improve the fast-path planner.
+      break;
     }
 
     size_t collision_rejections = 0;
@@ -308,14 +336,59 @@ struct ScopedSampleTiming {
     // Bounded beam search: a single greedy posture can dead-end at a
     // reconfiguration bottleneck, so keep a few alternative chains alive and
     // prune to the most promising ones each layer.
+    // For the fixed locomotive scene, prefer the first valid chain.  Keeping
+    // four branches multiplies IK calls at every layer and was the dominant
+    // source of the 45-50 s planning latency.
     constexpr size_t kBeamWidth = 4;
     std::vector<std::vector<ManiPathNodePtr>> frontier;
     frontier.push_back(std::vector<ManiPathNodePtr>(1, start_node));
 
     for (int layer = 1; layer < max_index_; ++layer) {
+      // First try to carry the last accepted joint posture through the next
+      // base sample.  This is the common case for the fixed locomotive scene
+      // and must happen before any Cartesian/IK sampling.
+      if (layer < max_index_ - 1 && frontier.size() == 1 &&
+          frontier.front().size() > 0) {
+        const ManiPathNodePtr held = initNode(layer, frontier.front().back()->state);
+        if (held->node_state != ManiPathNode::NODE_STATE::COLLISION &&
+            connectLayerCandidates(layer, frontier.front().back(), held)) {
+          // Look one base layer ahead.  If holding this posture would collide
+          // at the next pose, reconfigure now rather than waiting until the
+          // bottleneck, when there is no time left for a safe joint transition.
+          bool hold_ahead = true;
+          // Look ahead several base layers so reconfiguration starts before
+          // a long obstacle passage, while ordinary layers still cost zero
+          // IK samples.  The horizon is deliberately bounded for speed.
+          ManiPathNodePtr look_from = held;
+          for (int ahead = 1; ahead <= 4 && layer + ahead < max_index_ - 1; ++ahead) {
+            const ManiPathNodePtr next_held = initNode(layer + ahead, held->state);
+            if (next_held->node_state == ManiPathNode::NODE_STATE::COLLISION ||
+                !connectLayerCandidates(layer + ahead, look_from, next_held)) {
+              hold_ahead = false;
+              break;
+            }
+            look_from = next_held;
+          }
+          if (hold_ahead) {
+            std::vector<ManiPathNodePtr> reused = frontier.front();
+            reused.push_back(held);
+            frontier.clear();
+            frontier.push_back(std::move(reused));
+            continue;
+          }
+        }
+      }
       if (layer_candidates_[layer].empty()) {
-        sampleLayerCandidates(layer, frontier.front().back()->state,
-                              layer_candidates_[layer]);
+        // A single beam seed can belong to an IK branch that is unreachable
+        // at the next base pose.  Try every surviving frontier posture before
+        // declaring the whole layer infeasible.
+        for (const auto &chain : frontier) {
+          std::vector<ManiPathNodePtr> seeded_candidates;
+          sampleLayerCandidates(layer, chain.back()->state, seeded_candidates);
+          layer_candidates_[layer].insert(layer_candidates_[layer].end(),
+                                           seeded_candidates.begin(),
+                                           seeded_candidates.end());
+        }
       }
       ManiPathNodePtr end_node = nullptr;
       if (layer == max_index_ - 1) {
@@ -332,8 +405,39 @@ struct ScopedSampleTiming {
             candidate->node_state == ManiPathNode::NODE_STATE::COLLISION) {
           return;
         }
-        if (!connectLayerCandidates(layer, chain.back(), candidate)) return;
         std::vector<ManiPathNodePtr> extended = chain;
+        if (!connectLayerCandidates(layer, chain.back(), candidate)) {
+          // Try a bounded multi-layer bridge.  This lets the arm begin a
+          // gradual reconfiguration before a narrow obstacle while keeping
+          // every interpolated joint state under the normal collision gate.
+          bool bridged = false;
+          const size_t max_span = std::min<size_t>(6, chain.size() - 1);
+          for (size_t span = 2; span <= max_span && !bridged; ++span) {
+            const ManiPathNodePtr anchor = chain[chain.size() - 1 - span];
+            if (!connectLayerCandidates(layer, anchor, candidate)) continue;
+            std::vector<ManiPathNodePtr> bridge;
+            ManiPathNodePtr previous = anchor;
+            bool bridge_ok = true;
+            for (size_t k = 1; k < span; ++k) {
+              const double a = static_cast<double>(k) / static_cast<double>(span);
+              const Eigen::VectorXd q = (1.0 - a) * anchor->state + a * candidate->state;
+              const ManiPathNodePtr mid = initNode(anchor->index + static_cast<int>(k), q);
+              if (mid->node_state == ManiPathNode::NODE_STATE::COLLISION ||
+                  !connectLayerCandidates(mid->index, previous, mid)) {
+                bridge_ok = false;
+                break;
+              }
+              bridge.push_back(mid);
+              previous = mid;
+            }
+            if (bridge_ok && connectLayerCandidates(layer, previous, candidate)) {
+              extended.resize(chain.size() - span);
+              extended.insert(extended.end(), bridge.begin(), bridge.end());
+              bridged = true;
+            }
+          }
+          if (!bridged) return;
+        }
         extended.push_back(candidate);
         next.push_back(std::move(extended));
       };
@@ -351,10 +455,29 @@ struct ScopedSampleTiming {
       }
 
       if (next.empty()) {
+        // A layer may contain valid IK states that all belong to the wrong
+        // branch.  Retry that layer with a new sample sequence a few times;
+        // ordinary successful layers still stop at their first candidate.
+        bool retry_succeeded = false;
+        if (frontier.size() == 1 && !frontier.front().empty()) {
+          for (int retry = 0; retry < 8 && !retry_succeeded; ++retry) {
+            layer_candidates_[layer].clear();
+            std::vector<ManiPathNodePtr> retry_candidates;
+            sampleLayerCandidates(layer, frontier.front().back()->state, retry_candidates);
+            for (const auto &candidate : retry_candidates) {
+              try_extend(frontier.front(), candidate);
+              if (!next.empty()) { retry_succeeded = true; break; }
+            }
+          }
+        }
+        if (retry_succeeded) {
+          // Continue with the usual beam pruning below.
+        } else {
         ROS_WARN("[SampleMani][layer] no connectable candidate at layer=%d "
                  "(frontier=%zu candidates=%zu)",
                  layer, frontier.size(), layer_candidates_[layer].size());
         return false;
+        }
       }
 
       // Deduplicate by tip pointer and cap to the beam width.
@@ -384,9 +507,33 @@ struct ScopedSampleTiming {
     }
     const std::vector<ManiPathNodePtr> &chain = *best;
 
-    path.reserve(chain.size());
-    yaw_list.reserve(chain.size());
-    for (const auto &node : chain) {
+    path.reserve(max_index_);
+    yaw_list.reserve(max_index_);
+    for (size_t ci = 0; ci < chain.size(); ++ci) {
+      const auto &node = chain[ci];
+      if (ci > 0) {
+        const auto &prev = chain[ci - 1];
+        const int gap = node->index - prev->index;
+        for (int k = 1; k < gap; ++k) {
+          const double a = static_cast<double>(k) / static_cast<double>(gap);
+          const Eigen::VectorXd q = (1.0 - a) * prev->state + a * node->state;
+          const ManiPathNodePtr mid = initNode(prev->index + k, q);
+          if (mid->node_state == ManiPathNode::NODE_STATE::COLLISION ||
+              !connectLayerCandidates(mid->index, (k == 1 ? prev : initNode(prev->index + k - 1,
+                  (1.0 - static_cast<double>(k - 1) / gap) * prev->state +
+                  static_cast<double>(k - 1) / gap * node->state)), mid)) {
+            ROS_WARN("[SampleMani][layer] failed to expand bridge %d->%d", prev->index, node->index);
+            path.clear();
+            yaw_list.clear();
+            return false;
+          }
+          Eigen::VectorXd full_mid(traj_dim_);
+          full_mid.head(mobile_base_dof_) = car_state_list_[mid->index].head(mobile_base_dof_);
+          full_mid.tail(manipulator_dof_) = mid->state;
+          path.push_back(full_mid);
+          yaw_list.push_back(car_state_list_[mid->index](2));
+        }
+      }
       Eigen::VectorXd full_state(traj_dim_);
       full_state.head(mobile_base_dof_) =
           car_state_list_[node->index].head(mobile_base_dof_);
@@ -644,7 +791,17 @@ struct ScopedSampleTiming {
     Eigen::VectorXd t_vector;
     std::vector<Eigen::VectorXd> mani_path;
     Eigen::VectorXd state_full(traj_dim_);
-    init(car_state_list, car_state_list_check, t_list);
+    std::vector<double> sampling_times = t_list;
+    // The layered collision checker and planner_manager must use the same
+    // time parameterization.  Previously the checker used A*'s nonuniform
+    // durations while the returned layered path was assigned uniform times.
+    // Use one uniform duration per base layer for both sides.
+    if (car_state_list.size() > 1 && !sampling_times.empty()) {
+      const double total_duration = std::accumulate(sampling_times.begin(), sampling_times.end(), 0.0);
+      sampling_times.assign(car_state_list.size() - 1,
+                    total_duration / static_cast<double>(car_state_list.size() - 1));
+    }
+    init(car_state_list, car_state_list_check, sampling_times);
 
     // Preferred locomotive route: build the coupled path layer by layer from
     // collision-checked Cartesian IK candidates and connect adjacent layers
@@ -656,15 +813,47 @@ struct ScopedSampleTiming {
       std::vector<Eigen::VectorXd> layered_path;
       std::vector<double> layered_yaw;
       const ros::WallTime layered_start = ros::WallTime::now();
-      if (buildLayeredJointPath(start_state, end_state, layered_path, layered_yaw)) {
+      bool layered_ok = false;
+      for (int layered_retry = 0; layered_retry < 3 && !layered_ok; ++layered_retry) {
+        if (layered_retry > 0) {
+          layer_candidates_.assign(max_index_, std::vector<ManiPathNodePtr>());
+          ROS_WARN("[SampleMani][layer] retrying layered search attempt=%d", layered_retry + 1);
+        }
+        layered_ok = buildLayeredJointPath(start_state, end_state, layered_path, layered_yaw);
+      }
+      if (layered_ok) {
         simple_path_container.push_back(layered_path);
         yaw_list_container.push_back(layered_yaw);
         singul_container_new.push_back(singul_container.front());
         Eigen::VectorXd times(layered_path.size() > 1 ? layered_path.size() - 1 : 1);
-        const double total_time = std::accumulate(t_list.begin(), t_list.end(), 0.0);
-        times.setConstant(layered_path.size() > 1
-                              ? total_time / (layered_path.size() - 1)
-                              : total_time);
+        times.setZero();
+        if (layered_path.size() > 1) {
+          for (size_t j = 0; j + 1 < layered_path.size(); ++j) {
+            auto nearest_layer = [&](const Eigen::VectorXd &p) {
+              size_t best = 0;
+              double best_d = std::numeric_limits<double>::max();
+              for (size_t k = 0; k < car_state_list.size(); ++k) {
+                const double d = (p.head(2) - car_state_list[k].head(2)).squaredNorm();
+                if (d < best_d) { best_d = d; best = k; }
+              }
+              return best;
+            };
+            const size_t a = nearest_layer(layered_path[j]);
+            const size_t b = nearest_layer(layered_path[j + 1]);
+            const size_t lo = std::min(a, b);
+            const size_t hi = std::min(b, sampling_times.size());
+            for (size_t k = lo; k < hi; ++k)
+              times(static_cast<int>(j)) += 3.0 * sampling_times[k];
+            if (times(static_cast<int>(j)) <= 1.0e-6)
+              times(static_cast<int>(j)) = sampling_times.empty() ? 3.0 : 3.0 * sampling_times.front();
+          }
+        } else {
+          times(0) = sampling_times.empty() ? 3.0 : 3.0 * sampling_times.front();
+        }
+        const double total_time = times.sum();
+        ROS_INFO("[SampleMani][layer] timing map: base_layers=%zu checker_times=%zu output_points=%zu output_times=%d",
+                 car_state_list.size(), sampling_times.size(), layered_path.size(),
+                 static_cast<int>(times.size()));
         t_list_container.push_back(times);
         ROS_INFO("[SampleMani][layer] layered IK path accepted: layers=%zu time=%.3f ms",
                  layered_path.size(),

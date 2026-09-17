@@ -167,6 +167,39 @@ namespace remani_planner
       ROS_INFO("[Optimizer] stationary-arm seed accepted directly: segments=%d", traj_num_);
       return true;
     }
+
+    // The frontend already contains coupled, collision-checked IK waypoints.
+    // In the fixed locomotive scene preserve that piecewise path directly;
+    // L-BFGS is allowed to alter segment durations/control points and can
+    // create an unsafe minimum-snap overshoot between two safe waypoints.
+    if (preserve_frontend_joint_waypoints_) {
+      SingulTrajData frontend_data;
+      double frontend_t = 0.0;
+      frontend_data.clearSingulTraj();
+      for (int i = 0; i < traj_num_; ++i) {
+        SnapOpt_container_[i].reset(iniState_container_[i], finState_container_[i],
+                                    piece_num_container_[i]);
+        SnapOpt_container_[i].generate(initInnerPts_container[i], initT_container[i]);
+        SnapOpt_container_[i].generateLinear(initInnerPts_container[i], initT_container[i],
+                                             singul_container[i]);
+        frontend_data.addSingulTraj(SnapOpt_container_[i].getTraj(singul_container[i]),
+                                    frontend_t);
+        frontend_t = frontend_data.singul_traj.back().end_time;
+      }
+      if (IsTrajSafe(frontend_data)) {
+        optCps_container = initInnerPts_container;
+        optWps_container.clear();
+        optT_container.clear();
+        optEECps_container.clear();
+        for (int i = 0; i < traj_num_; ++i) {
+          optWps_container.push_back(SnapOpt_container_[i].getInitConstrainPoints(1));
+          optT_container.push_back(SnapOpt_container_[i].get_T1());
+        }
+        ROS_INFO("[Optimizer] coupled frontend seed accepted directly");
+        return true;
+      }
+      ROS_WARN("[Optimizer] coupled frontend seed unsafe; continuing with optimizer");
+    }
     
     variable_num_ += traj_dim_ * (traj_num_ - 1); // gear pos
     variable_num_ += 1 * (traj_num_ - 1); // gear angle
@@ -245,6 +278,43 @@ namespace remani_planner
       ROS_INFO("The optimization result is : %s", lbfgs::lbfgs_strerror(result));      
     }
 
+    // The penalty term above guides L-BFGS but does not mathematically fix an
+    // interior point.  Project the optimized inner points back onto the
+    // accepted frontend arm waypoints, then rebuild the snap trajectories so
+    // the controller receives the same IK joint waypoints that passed the
+    // coupled collision checks.
+    if (preserve_frontend_joint_waypoints_ &&
+        hard_waypoints_container_.size() == static_cast<size_t>(traj_num_)) {
+      int point_offset = 0;
+      int time_offset = 0;
+      int point_total = 0;
+      for (int pieces : piece_num_container_)
+        point_total += traj_dim_ * (pieces - 1);
+      Eigen::VectorXd projected_times(piece_num_all);
+      Eigen::Map<const Eigen::VectorXd> virtual_times(
+          x.data() + point_total,
+          piece_num_all);
+      VirtualT2RealT(virtual_times, projected_times);
+      for (int i = 0; i < traj_num_; ++i) {
+        const int inner_cols = piece_num_container_[i] - 1;
+        Eigen::Map<const Eigen::MatrixXd> optimized_points(
+            x.data() + point_offset, traj_dim_, inner_cols);
+        Eigen::MatrixXd projected = optimized_points;
+        const Eigen::MatrixXd &hard = hard_waypoints_container_[i];
+        if (hard.rows() == traj_dim_ && hard.cols() == inner_cols) {
+          projected.block(mobile_base_dof_, 0, manipulator_dof_, inner_cols) =
+              hard.block(mobile_base_dof_, 0, manipulator_dof_, inner_cols);
+        }
+        Eigen::VectorXd segment_times = projected_times.segment(time_offset, piece_num_container_[i]);
+        SnapOpt_container_[i].reset(iniState_container_[i], finState_container_[i],
+                                    piece_num_container_[i]);
+        SnapOpt_container_[i].generate(projected, segment_times);
+        point_offset += traj_dim_ * inner_cols;
+        time_offset += piece_num_container_[i];
+      }
+      ROS_INFO("[Optimizer] projected optimized arm points back to frontend IK waypoints");
+    }
+
     // test collision
     SingulTrajData singul_traj_data;
     double traj_start_time = 0;
@@ -269,8 +339,11 @@ namespace remani_planner
             piece_num_container_[i] - 1) {
           continue;
         }
-        const Eigen::MatrixXd junctions =
-            SnapOpt_container_[i].getInitConstrainPoints(1);
+        const auto traj = SnapOpt_container_[i].getTraj(singul_container[i]);
+        const int junction_count = traj.getPieceNum() + 1;
+        Eigen::MatrixXd junctions(traj_dim_, junction_count);
+        for (int j = 0; j < junction_count; ++j)
+          junctions.col(j) = traj.getJuncPos(j);
         if (!hardWaypointsSatisfied(junctions, hard_waypoints_container_[i],
                                     mobile_base_dof_, manipulator_dof_, 1.0e-3)) {
           ROS_ERROR("[Optimizer] preserved waypoint validation failed: segment=%d", i);
@@ -1459,12 +1532,19 @@ namespace remani_planner
       // Minimum-snap overshoots the trapezoidal estimate at the boundaries,
       // so give the first and last pieces extra slack to stay within the
       // joint acceleration limit.
-      t_list[0] *= 2.5;
-      t_list[piece_num - 1] *= 2.5;
+      t_list[0] *= 1.5;
+      t_list[piece_num - 1] *= 1.5;
       // Leave acceleration headroom for the differential-drive wheels.
       // Without this margin the optimizer repeatedly starts from a seed with
       // infeasible wheel alpha and spends several retries repairing it.
-      t_list *= 1.4;
+      // The coupled arm path contains narrow collision-free corridors.
+      // Extra segment time reduces minimum-snap overshoot between adjacent
+      // IK waypoints instead of relying on a post-hoc collision rejection.
+      t_list *= 2.0;
+      // Propagate the safe durations to planner_manager.  It reconstructs
+      // the actual frontend trajectory from t_list_container; keeping the
+      // original durations here silently discarded all of the limits above.
+      t_list_container[i] = t_list;
 
       if(i > 0){
         headState.setZero();
@@ -1487,7 +1567,12 @@ namespace remani_planner
         tailState.col(3).head(2) = singul_container[i] * tailState.col(3).head(2);
       }
       frontendMJ_container[i].reset(headState, tailState, piece_num);
-      frontendMJ_container[i].generate(innerPts, t_list_container[i]);
+      // Use the adjusted, acceleration-safe durations computed above.  The
+      // old code accidentally generated the frontend seed with the raw A*
+      // durations, so the later safety check saw the original acceleration
+      // spikes despite the scaling.
+      frontendMJ_container[i].generate(innerPts, t_list);
+      frontendMJ_container[i].generateLinear(innerPts, t_list, singul_container[i]);
     }
     return status;
   }

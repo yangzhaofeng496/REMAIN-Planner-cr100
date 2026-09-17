@@ -2,6 +2,34 @@
 
 ROS Noetic mobile-manipulator planner for an IR100 mobile base with a CR10 arm.
 
+## End-effector target adapter (empty scene)
+
+The decoupled `ir100_goal_adapter` package accepts a `geometry_msgs/PoseStamped`
+target and forwards only its position as a `geometry_msgs/PointStamped` to the
+existing planner `/clicked_point` interface. It does not publish motor commands;
+the REMAIN planner owns coupled base/arm planning and `mm_controller` owns
+execution.
+
+Build the adapter in the ROS workspace, then launch the empty-scene integration:
+
+```bash
+roslaunch ir100_goal_adapter empty_scene_goal_planning.launch
+```
+
+Send a target in the `world` frame:
+
+```bash
+rostopic pub -1 /ir100/end_effector_target geometry_msgs/PoseStamped \
+  "{header: {frame_id: world}, pose: {position: {x: 0.8, y: 0.0, z: 1.1}, orientation: {w: 1.0}}}"
+```
+
+Monitor the adapter state and the planner trajectory independently:
+
+```bash
+rostopic echo /ir100_goal_adapter/state
+rostopic echo /planning/trajectory
+```
+
 当前版本包含：
 
 - 底盘与机械臂联合规划；

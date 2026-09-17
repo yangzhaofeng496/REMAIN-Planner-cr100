@@ -45,20 +45,21 @@ search:
   # fall back to one globally safe folded posture (some undercarriage
   # bottlenecks have no reachable Cartesian candidate at all).
   enable_shared_posture_fallback: true
-  cartesian_samples_per_layer: 64
+  cartesian_samples_per_layer: 256
   cartesian_sample_radius_xy: 0.32
-  cartesian_sample_z_min: 1.15
+  # Extend local IK resampling toward the locomotive undercarriage.
+  cartesian_sample_z_min: 0.85
   cartesian_sample_z_max: 1.80
   max_sample_time: 0.2
   # The arm must be able to reconfigure while the base crosses the bar.
   # 50 ms was too short for the joint-space RRT to find that coupled path.
-  max_mani_search_time: 8.0
+  max_mani_search_time: 20.0
 
 optimize:
   # Hold the accepted front-end IK joint waypoints fixed through the backend
   # minimum-snap optimization for the fixed locomotive scene.
   preserve_frontend_joint_waypoints: true
-  hard_waypoint_weight: 1000000.0
+  hard_waypoint_weight: 100000000.0
 
 optimization:
   weight_obstacle               : 50000.0
@@ -67,12 +68,14 @@ optimization:
   weight_manipulator_feasibility: 100.0
   # Avoid shortening the initial base trajectory so aggressively that wheel
   # acceleration becomes infeasible and forces repeated replans.
-  weight_time                   : 0.1
+  # Keep the collision-checked frontend segment durations; shortening them
+  # makes the snap curve exceed the arm acceleration limit.
+  weight_time                   : 0.0
 
   ground_safe_dis        : 0.03
   safe_margin            : 0.10
   safe_margin_mani       : 0.10
-  self_safe_margin       : 0.10
+  self_safe_margin       : 0.03
   ground_safe_margin     : 0.03
 
   mobile_base_opt_gear: true
@@ -82,6 +85,16 @@ optimization:
 fsm:
   target_type  : 1
   time_for_gripper: 0.05
+
+  # 3D end-effector goal: click a point in RViz (Publish Point -> /clicked_point)
+  # to move the mobile base + arm until the end-effector reaches that world point.
+  ee_goal_reach_xy_min: 0.25   # keep the current base when the point is this close
+  ee_goal_reach_xy_max: 1.10   # ... or this far (arm workspace in XY)
+  ee_goal_standoff   : 0.75    # preferred base-to-point distance when it moves
+  ee_goal_clearance  : 0.05    # fallback pull-back, used only when the exact point has no collision-free IK
+  ee_goal_z_min      : 0.15    # reachable point height in world (base_link z = 0)
+  ee_goal_z_max      : 2.00
+  ee_goal_ik_samples : 20      # extra collision-free LM seeds per base standoff (position-only LMA IK)
 
   thresh_replan_time: 2.5
   replan_trajectory_time: 1.7

@@ -592,6 +592,11 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
           const Eigen::VectorXd velocity = traj.getVel(std::min(t, duration));
           if (velocity.head(2).norm() > 1.0e-4)
             yaw = std::atan2(velocity(1), velocity(0));
+          // At the final stationary sample velocity no longer encodes the
+          // nonholonomic base heading. Preserve the requested terminal yaw
+          // for the coupled collision check instead of falling back to zero.
+          if (i + 1 == singul_container.size() && t >= duration - 1.0e-6)
+            yaw = local_target_yaw;
           int collision_type = -1;
           ++safety_checks;
           if (mm_config_->checkcollision(Eigen::Vector3d(state(0), state(1), yaw),
@@ -619,10 +624,12 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
       bool waypoints_ok = true;
       for (unsigned int i = 0; i < initInnerPts_container.size() && waypoints_ok; ++i) {
         if (initInnerPts_container[i].cols() == 0) continue;
-        const Eigen::MatrixXd junctions =
-            (*ploy_traj_opt_->getMinSnapOptContainerPtr())[i]
-                .getTraj(singul_container[i])
-                .getPositions();
+        const auto traj = (*ploy_traj_opt_->getMinSnapOptContainerPtr())[i]
+                              .getTraj(singul_container[i]);
+        const int junction_count = traj.getPieceNum() + 1;
+        Eigen::MatrixXd junctions(pp_.traj_dim_, junction_count);
+        for (int j = 0; j < junction_count; ++j)
+          junctions.col(j) = traj.getJuncPos(j);
         if (junctions.cols() != initInnerPts_container[i].cols() + 2) {
           continue;
         }
@@ -653,6 +660,8 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
           double yaw = (i == 0 && t < 1.0e-9) ? start_yaw : 0.0;
           if (velocity.head(2).norm() > 1.0e-4)
             yaw = std::atan2(velocity(1), velocity(0));
+          if (i + 1 == singul_container.size() && t >= duration - 1.0e-6)
+            yaw = local_target_yaw;
           int collision_type = -1;
           ++seed_checks;
           if (mm_config_->checkcollision(Eigen::Vector3d(state(0), state(1), yaw),

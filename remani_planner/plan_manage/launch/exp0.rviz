@@ -4,6 +4,7 @@ Panels:
     Name: Displays
     Property Tree Widget:
       Expanded:
+        - /Global Options1
         - /mm1
         - /mm1/Planning1
       Splitter Ratio: 0.5498241782188416
@@ -21,7 +22,7 @@ Panels:
   - Class: rviz/Time
     Name: Time
     SyncMode: 0
-    SyncSource: simulation_map
+    SyncSource: ""
   - Class: rviz/Views
     Expanded:
       - /Current View1
@@ -61,7 +62,7 @@ Visualization Manager:
       Displays:
         - Alpha: 1
           Class: rviz/RobotModel
-          Collision Enabled: true
+          Collision Enabled: false
           Enabled: true
           Links:
             All Links Enabled: true
@@ -162,104 +163,19 @@ Visualization Manager:
           Visual Enabled: true
         - Alpha: 0.44999998807907104
           Class: rviz/RobotModel
-          Collision Enabled: true
-          Enabled: true
+          Collision Enabled: false
+          Enabled: false
           Links:
             All Links Enabled: true
             Expand Joint Details: false
             Expand Link Details: false
             Expand Tree: false
             Link Tree Style: Links in Alphabetic Order
-            Link1:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-              Value: true
-            Link2:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-              Value: true
-            Link3:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-              Value: true
-            Link4:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-              Value: true
-            Link5:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-              Value: true
-            Link6:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-              Value: true
-            arm_base_link:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-              Value: true
-            arm_gripper_link:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-              Value: true
-            arm_world_link:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-            base_link:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-              Value: true
-            front_eir_link:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-            front_laser:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-            imu_link:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-            left_eir_link:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-            left_wheel_link:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-            mid_laser_link:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-            rear_laser:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-            right_eir_link:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
-            right_wheel_link:
-              Alpha: 1
-              Show Axes: false
-              Show Trail: false
           Name: URDF Collision Geometry
           Robot Description: robot_description
           TF Prefix: ""
           Update Interval: 0
-          Value: true
+          Value: false
           Visual Enabled: false
         - Alpha: 1
           Class: rviz/Axes
@@ -271,29 +187,45 @@ Visualization Manager:
           Show Trail: false
           Value: true
         - Class: rviz/MarkerArray
-          Enabled: false
+          Enabled: true
           Marker Topic: /model_vis/vis_mm
           Name: mm_vis
           Namespaces:
             {}
           Queue Size: 100
-          Value: false
+          Value: true
         - Class: rviz/Marker
-          Enabled: true
+          Enabled: false
           Marker Topic: /base_collision_test
           Name: Collision Test Bar
           Namespaces:
             {}
           Queue Size: 100
-          Value: true
+          Value: false
         - Class: rviz/MarkerArray
-          Enabled: true
+          Enabled: false
           Marker Topic: /collision_body_test
           Name: Collision Body Approximation
           Namespaces:
             {}
           Queue Size: 100
+          Value: false
+        - Class: rviz/MarkerArray
+          Enabled: true
+          Marker Topic: /remani_planner_node/collision_markers
+          Name: Self Collision (red)
+          Namespaces:
+            {}
+          Queue Size: 10
           Value: true
+        - Class: rviz/MarkerArray
+          Enabled: false
+          Marker Topic: /remani_planner_node/gray_robot_model
+          Name: Gray Robot Model
+          Namespaces:
+            {}
+          Queue Size: 10
+          Value: false
         - Class: rviz/Group
           Displays:
             - Alpha: 1
@@ -425,40 +357,48 @@ Visualization Manager:
       Enabled: true
       Name: mm
     - Class: rviz/Marker
-      Enabled: true
+      Enabled: false
       Marker Topic: /remani_planner_node/traj_pt_vis
       Name: Marker
       Namespaces:
         {}
       Queue Size: 100
-      Value: true
+      Value: false
     - Class: rviz/Marker
-      Enabled: true
+      Enabled: false
       Marker Topic: /remani_planner/cartesian_ik_samples
       Name: Marker
       Namespaces:
         {}
       Queue Size: 100
-      Value: true
+      Value: false
     - Class: rviz/Marker
-      Enabled: true
+      Enabled: false
       Marker Topic: /remani_planner_node/failed_list
       Name: Marker
       Namespaces:
         {}
       Queue Size: 100
-      Value: true
+      Value: false
     - Class: rviz/Marker
-      Enabled: true
+      Enabled: false
       Marker Topic: /remani_planner/cartesian_ik_samples
       Name: Marker
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: false
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /remani_planner_node/ee_goal_marker
+      Name: EE Goal
       Namespaces:
         {}
       Queue Size: 100
       Value: true
   Enabled: true
   Global Options:
-    Background Color: 255; 255; 255
+    Background Color: 0; 0; 0
     Default Light: true
     Fixed Frame: world
     Frame Rate: 30
@@ -485,7 +425,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 9.014803886413574
+      Distance: 1.7109252214431763
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -493,9 +433,9 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: 3.205763578414917
-        Y: -1.732736587524414
-        Z: -1.151365041732788
+        X: 0.7193096876144409
+        Y: -0.47889089584350586
+        Z: 2.997011423110962
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
