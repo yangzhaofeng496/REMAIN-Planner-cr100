@@ -8,7 +8,7 @@ Panels:
         - /mm1
         - /mm1/Planning1
       Splitter Ratio: 0.5498241782188416
-    Tree Height: 239
+    Tree Height: 443
   - Class: rviz/Selection
     Name: Selection
   - Class: rviz/Tool Properties
@@ -215,7 +215,13 @@ Visualization Manager:
           Marker Topic: /remani_planner_node/collision_markers
           Name: Self Collision (red)
           Namespaces:
-            {}
+            collision_spheres/Link1: true
+            collision_spheres/Link2: true
+            collision_spheres/Link3: true
+            collision_spheres/Link4: true
+            collision_spheres/Link5: true
+            collision_spheres/Link6: true
+            collision_spheres/arm_gripper_link: true
           Queue Size: 10
           Value: true
         - Class: rviz/MarkerArray
@@ -250,6 +256,30 @@ Visualization Manager:
               Shaft Diameter: 0.05000000074505806
               Shaft Length: 0.05000000074505806
               Topic: /remani_planner_node/kinoastar/path_nav
+              Unreliable: false
+              Value: true
+            - Alpha: 1
+              Buffer Length: 1
+              Class: rviz/Path
+              Color: 0; 255; 255
+              Enabled: true
+              Head Diameter: 0.15000000596046448
+              Head Length: 0.10000000149011612
+              Length: 0.30000001192092896
+              Line Style: Lines
+              Line Width: 0.05000000074505806
+              Name: Frontend EE Path
+              Offset:
+                X: 0
+                Y: 0
+                Z: 0
+              Pose Color: 0; 255; 255
+              Pose Style: None
+              Queue Size: 10
+              Radius: 0.029999999329447746
+              Shaft Diameter: 0.05000000074505849
+              Shaft Length: 0.05000000074505849
+              Topic: /remani_planner_node/kinoastar/ee_path_nav
               Unreliable: false
               Value: true
             - Alpha: 1
@@ -425,7 +455,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 1.7109252214431763
+      Distance: 7.024704456329346
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -433,17 +463,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: 0.7193096876144409
-        Y: -0.47889089584350586
-        Z: 2.997011423110962
+        X: 2.9853789806365967
+        Y: 3.8611998558044434
+        Z: 0.026732921600341797
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.2747962474822998
+      Pitch: 0.49414974451065063
       Target Frame: world
-      Yaw: 4.6787638664245605
+      Yaw: -1.7797492742538452
     Saved:
       - Class: rviz/FPS
         Enable Stereo Rendering:

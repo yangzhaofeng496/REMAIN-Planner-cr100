@@ -9,6 +9,8 @@
 #include <cmath>
 #include <algorithm>
 #include <fstream>
+#include <sstream>
+#include <sys/stat.h>
 
 namespace remani_planner {
 namespace {
@@ -46,10 +48,57 @@ void addTriangleSamples(const aiVector3D& a, const aiVector3D& b,
   }
 }
 
+struct SphereConfig { int count = 3; double scale = 1.0; };
+
+bool readSphereConfig(const std::string& path,
+                      std::map<std::string, SphereConfig>& config,
+                      std::string& error) {
+  std::ifstream in(path);
+  if (!in) { error = "cannot open sphere config: " + path; return false; }
+  std::string line, link;
+  while (std::getline(in, line)) {
+    const size_t hash = line.find('#');
+    if (hash != std::string::npos) line.resize(hash);
+    const size_t first = line.find_first_not_of(" \t");
+    if (first == std::string::npos) continue;
+    const size_t colon = line.find(':', first);
+    if (colon == std::string::npos) continue;
+    const std::string key = line.substr(first, colon - first);
+    const std::string value = line.substr(colon + 1);
+    if (first == 2 && key != "links") link = key;
+    else if (first >= 4 && !link.empty()) {
+      std::istringstream parser(value);
+      if (key == "count") parser >> config[link].count;
+      else if (key == "scale") parser >> config[link].scale;
+    }
+  }
+  for (const auto& item : config) {
+    if (item.second.count < 1 || item.second.count > 32 ||
+        !(item.second.scale > 0.0) || !std::isfinite(item.second.scale)) {
+      error = "invalid sphere config for " + item.first;
+      return false;
+    }
+  }
+  return true;
+}
+
+long long fileMtime(const std::string& path) {
+  struct stat st;
+  if (stat(path.c_str(), &st) != 0) return -1;
+  return static_cast<long long>(st.st_mtim.tv_sec) * 1000000000LL + st.st_mtim.tv_nsec;
+}
+
 }  // namespace
 
 bool UrdfCollisionModel::load(const std::string& description, double resolution,
-                               std::string& error) {
+                               std::string& error, const std::string& sphere_config_path) {
+  description_ = description;
+  resolution_ = resolution;
+  sphere_config_path_ = sphere_config_path;
+  sphere_config_mtime_ = fileMtime(sphere_config_path_);
+  std::map<std::string, SphereConfig> sphere_config;
+  if (!sphere_config_path_.empty() && !readSphereConfig(sphere_config_path_, sphere_config, error))
+    return false;
   samples_.clear();
   spheres_.clear();
   if (resolution <= 0.0) { error = "collision mesh resolution must be positive"; return false; }
@@ -101,9 +150,10 @@ bool UrdfCollisionModel::load(const std::string& description, double resolution,
         reduced.push_back(out[static_cast<size_t>(i * step)]);
       out.swap(reduced);
     }
-    // Compact broad-phase representation for optimization: three spheres
-    // along the link's longest local axis.  Mesh samples remain authoritative
-    // for the final safety check.
+    // Compact broad-phase representation for optimization: spheres along the
+    // link's longest local axis.  Link2 and Link3 use four spheres so their
+    // displayed inflated models match the four collision spheres requested.
+    // Mesh samples remain authoritative for the final safety check.
     Eigen::Vector3d lo = out.front(), hi = out.front();
     for (const auto &p : out) { lo = lo.cwiseMin(p); hi = hi.cwiseMax(p); }
     const Eigen::Vector3d ext = hi - lo;
@@ -111,24 +161,39 @@ bool UrdfCollisionModel::load(const std::string& description, double resolution,
     else if (ext.z() > ext.x() && ext.z() > ext.y()) axis = 2;
     const double along = ext(axis);
     auto &ss = spheres_[link_name];
-    for (int si = 0; si < 3; ++si) {
-      const double u = (si + 0.5) / 3.0;
+    const auto config_it = sphere_config.find(link_name);
+    const SphereConfig config = config_it == sphere_config.end() ? SphereConfig() : config_it->second;
+    const int sphere_count = config.count;
+    for (int si = 0; si < sphere_count; ++si) {
+      const double u = (si + 0.5) / sphere_count;
       Eigen::Vector3d c = lo + 0.5 * ext;
       c(axis) = lo(axis) + u * along;
-      const double low = lo(axis) + (static_cast<double>(si) / 3.0) * along;
-      const double high = lo(axis) + (static_cast<double>(si + 1) / 3.0) * along;
+      const double low = lo(axis) + (static_cast<double>(si) / sphere_count) * along;
+      const double high = lo(axis) + (static_cast<double>(si + 1) / sphere_count) * along;
       double radius = 0.0;
       for (const auto &p : out) {
-        if (p(axis) >= low && (si == 2 || p(axis) < high))
+        if (p(axis) >= low && (si == sphere_count - 1 || p(axis) < high))
           radius = std::max(radius, (p - c).norm());
       }
       // The URDF mesh samples already describe the link surface.  Keep only
       // a small discretization margin; a larger padding creates false
       // self-collisions between non-adjacent links (notably Link3/Link5).
-      ss.push_back({c, std::max(0.025, radius + 0.005)});
+      double sphere_radius = std::max(0.025, radius + 0.005);
+      sphere_radius *= config.scale;
+      ss.push_back({c, sphere_radius});
     }
   }
   if (samples_.empty()) { error = "robot_description contains no mesh collision geometry"; return false; }
+  return true;
+}
+
+bool UrdfCollisionModel::reloadSphereConfigIfChanged(std::string& error) {
+  if (sphere_config_path_.empty()) return false;
+  const long long current_mtime = fileMtime(sphere_config_path_);
+  if (current_mtime < 0 || current_mtime == sphere_config_mtime_) return false;
+  UrdfCollisionModel candidate;
+  if (!candidate.load(description_, resolution_, error, sphere_config_path_)) return false;
+  *this = std::move(candidate);
   return true;
 }
 

@@ -142,6 +142,8 @@ namespace remani_planner
     ros::Publisher recovery_car_pub_;
     int last_collision_type_{-1};
     bool recovery_active_{false};
+    bool preempt_settle_active_{false};
+    ros::Time preempt_settle_deadline_;
     ros::Time recovery_deadline_;
     Eigen::Vector3d pending_ee_goal_{Eigen::Vector3d::Zero()};
     Eigen::Vector3d recovery_car_goal_{Eigen::Vector3d::Zero()};

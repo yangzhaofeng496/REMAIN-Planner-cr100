@@ -1,0 +1,17 @@
+<launch>
+  <arg name="load_robot_description" default="true"/>
+  <arg name="robot_description" default="robot_description"/>
+
+  <param if="$(arg load_robot_description)"
+         name="$(arg robot_description)"
+         command="$(find xacro)/xacro $(find ir100_description)/urdf/ir100_robot.xacro"/>
+  <param name="$(arg robot_description)_semantic"
+         textfile="$(find fastarmer_moveit_config)/config/fastarmer.srdf"/>
+
+  <group ns="$(arg robot_description)_kinematics">
+    <rosparam command="load"
+              file="$(find fastarmer_moveit_config)/config/kinematics.yaml"/>
+  </group>
+
+  <node pkg="joint_state_publisher" type="joint_state_publisher" name="joint_state_publisher"/>
+</launch>

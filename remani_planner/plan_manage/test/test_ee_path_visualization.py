@@ -11,6 +11,7 @@ RVIZ = pathlib.Path(__file__).parents[1] / "launch" / "exp0.rviz"
 CANDIDATE_TOPIC = "/remani_planner/cartesian_ik_samples"
 PLANNED_TOPIC = "/remani_planner/planned_ee_path"
 ACTUAL_TOPIC = "/remani_planner/actual_ee_path"
+FRONTEND_TOPIC = "/remani_planner_node/kinoastar/ee_path_nav"
 
 
 def collect_displays(node):
@@ -35,6 +36,7 @@ class EePathVisualizationTest(unittest.TestCase):
         topics = [d.get("Topic") for d in self.displays if d.get("Class") == "rviz/Path"]
         self.assertIn(PLANNED_TOPIC, topics)
         self.assertIn(ACTUAL_TOPIC, topics)
+        self.assertIn(FRONTEND_TOPIC, topics)
 
     def test_planned_path_is_blue(self):
         planned = next(d for d in self.displays

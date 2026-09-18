@@ -1,0 +1,25 @@
+# Collision sphere approximation for the URDF mesh model.
+# count: number of spheres along the link's longest local axis.
+# scale: multiplier applied to each generated sphere radius.
+links:
+  Link1:
+    count: 2
+    scale: 0.80
+  Link2:
+    count: 5
+    scale: 0.75
+  Link3:
+    count: 7
+    scale: 0.70
+  Link4:
+    count: 2
+    scale: 0.80
+  Link5:
+    count: 2
+    scale: 0.80
+  Link6:
+    count: 3
+    scale: 0.80
+  arm_gripper_link:
+    count: 1
+    scale: 0.80

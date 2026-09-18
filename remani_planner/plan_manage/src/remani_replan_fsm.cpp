@@ -568,6 +568,7 @@ namespace remani_planner
 
     const Eigen::Vector3d target(msg->point.x, msg->point.y, msg->point.z);
     ROS_WARN("[FSM] ee-goal clicked: (%.3f %.3f %.3f)", target.x(), target.y(), target.z());
+    bool preempted = false;
 
     if (exec_state_ == EXEC_TRAJ || have_local_traj_) {
       ROS_WARN("[FSM] preempting previous trajectory for newest ee-goal");
@@ -575,6 +576,10 @@ namespace remani_planner
       have_local_traj_ = false;
       have_target_ = false;
       have_new_target_ = true;
+      pending_ee_goal_ = target;
+      preempt_settle_active_ = true;
+      preempt_settle_deadline_ = ros::Time::now() + ros::Duration(0.20);
+      preempted = true;
       changeFSMExecState(WAIT_TARGET, "NEW_EE_GOAL");
     }
 
@@ -595,6 +600,14 @@ namespace remani_planner
     marker.color.b = 0.2;
     marker.color.a = 1.0;
     ee_goal_marker_pub_.publish(marker);
+
+    // Let the controller consume ACTION_ABORT and publish one or two fresh
+    // measured states before constructing the replacement trajectory.
+    if (preempted) {
+      recovery_timer_.start();
+      ROS_WARN("[FSM] waiting for controller settle before replanning newest ee-goal");
+      return;
+    }
 
     int current_collision = -1;
     const Eigen::Vector3d current_car(mm_state_pos_(0), mm_state_pos_(1), mm_car_yaw_);
@@ -645,6 +658,16 @@ namespace remani_planner
 
   void REMANIReplanFSM::recoveryCallback(const ros::TimerEvent &)
   {
+    if (preempt_settle_active_) {
+      if (ros::Time::now() < preempt_settle_deadline_) return;
+      preempt_settle_active_ = false;
+      recovery_timer_.stop();
+      if (have_odom_) {
+        ROS_WARN("[FSM] controller settled; replanning from measured state");
+        planToEeGoal(pending_ee_goal_);
+      }
+      return;
+    }
     if (!recovery_active_) return;
     if (!have_odom_ || recovery_joint_goal_.size() != manipulator_dim_) return;
 
@@ -917,10 +940,19 @@ namespace remani_planner
             (mm_state_pos_.tail(manipulator_dim_) -
              planned.tail(manipulator_dim_)).norm();
         double ee_dist = -1.0;
+        double car_xy_dist = -1.0;
+        double car_yaw_dist = -1.0;
         Eigen::Matrix4d T_planned_ee;
         if(planner_manager_->computeUrdfEeTransform(planned.tail(manipulator_dim_), T_planned_ee)){
           Eigen::Matrix4d T_planned_car;
-          const Eigen::Vector3d planned_car(planned(0), planned(1), traj.getCarAngle(t));
+          const Eigen::VectorXd planned_vel = traj.getVel(t);
+          const int planned_singul = traj.getSingul(t);
+          const double planned_yaw = std::atan2(planned_singul * planned_vel(1),
+                                                planned_singul * planned_vel(0));
+          const Eigen::Vector3d planned_car(planned(0), planned(1), planned_yaw);
+          car_xy_dist = (planned_car.head<2>() - mm_state_pos_.head<2>()).norm();
+          car_yaw_dist = std::atan2(std::sin(planned_yaw - mm_car_yaw_),
+                                    std::cos(planned_yaw - mm_car_yaw_));
           planner_manager_->mm_config_->CarState2T(planned_car, T_planned_car);
           Eigen::Matrix4d T_actual_ee;
           if(planner_manager_->computeUrdfEeTransform(mm_state_pos_.tail(manipulator_dim_), T_actual_ee)){
@@ -932,8 +964,8 @@ namespace remani_planner
           }
         }
         ROS_INFO_THROTTLE(1.0,
-                          "[EETrack] t=%.2f joint_dist=%.4f ee_dist=%.4f",
-                          t, joint_dist, ee_dist);
+                          "[EETrack] t=%.2f joint_dist=%.4f ee_dist=%.4f car_xy=%.4f car_yaw=%.4f",
+                          t, joint_dist, ee_dist, car_xy_dist, car_yaw_dist);
       }
     }
   }
@@ -1002,8 +1034,13 @@ namespace remani_planner
   void REMANIReplanFSM::sendPolyTrajROSMsg(){
     auto data = &planner_manager_->traj_container_.singul_traj_data;
     // Start a fresh measured end-effector trace for each new trajectory.
-    resetEePath(actual_ee_path_, "world", ros::Time::now());
+    const ros::Time execution_stamp = ros::Time::now();
+    resetEePath(actual_ee_path_, "world", execution_stamp);
     last_actual_ee_time_ = ros::Time(0);
+    // Publish the empty reset immediately.  Otherwise RViz keeps the old
+    // latched red path visible until the next joint-state callback and can
+    // connect samples from two different trajectories into a false jump.
+    actual_ee_path_pub_.publish(actual_ee_path_);
     // Send one complete trajectory atomically.  Sending one ROS message per
     // piece lets a replan interleave with the previous trajectory and causes
     // the controller to append pieces from different trajectory versions.

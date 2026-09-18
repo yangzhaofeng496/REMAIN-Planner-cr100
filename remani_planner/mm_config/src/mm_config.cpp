@@ -22,6 +22,7 @@ struct ScopedCollisionTiming {
   explicit ScopedCollisionTiming(const char *n) : name(n), start(ros::WallTime::now()) {}
   ~ScopedCollisionTiming() { (void)name; (void)start; }
 };
+
 }
 
 void MMConfig::setParam(ros::NodeHandle &nh, const std::shared_ptr<GridMap>& env){
@@ -51,7 +52,9 @@ void MMConfig::setParam(ros::NodeHandle &nh){
             ROS_ERROR("collision_model_source=urdf_mesh but /robot_description is missing");
         else {
             urdf_collision_model_.reset(new UrdfCollisionModel());
-            if (!urdf_collision_model_->load(description, resolution, error)) {
+            const std::string sphere_config_path =
+                ros::package::getPath("mm_config") + "/config/collision_spheres.yaml";
+            if (!urdf_collision_model_->load(description, resolution, error, sphere_config_path)) {
                 ROS_ERROR_STREAM("Failed to load URDF collision mesh: " << error);
                 urdf_collision_model_.reset();
                 use_urdf_collision_mesh_ = false;
@@ -184,6 +187,15 @@ void MMConfig::setParam(ros::NodeHandle &nh){
 
     setColorSet();
     setLinkPoint();
+}
+
+void MMConfig::refreshSphereConfig() const {
+    if (!urdf_collision_model_) return;
+    std::string error;
+    if (urdf_collision_model_->reloadSphereConfigIfChanged(error))
+        ROS_INFO("Reloaded collision sphere configuration from YAML");
+    else if (!error.empty())
+        ROS_WARN_THROTTLE(5.0, "Keeping previous collision sphere configuration: %s", error.c_str());
 }
 
 void MMConfig::setColorSet(){
@@ -747,6 +759,7 @@ bool MMConfig::checkCarObsCollision(Eigen::Vector3d car_state, bool precise, boo
 }
 
 bool MMConfig::checkManiObsCollision(Eigen::Vector3d car_state, Eigen::VectorXd mani_state, bool safe, double &min_dist){
+    refreshSphereConfig();
     ScopedCollisionTiming timing("mm_config::checkManiObsCollision");
     Eigen::Matrix4d T_q = Eigen::Matrix4d::Identity();
     T_q(0, 0) = cos(car_state(2));
@@ -847,6 +860,7 @@ bool MMConfig::checkManiObsCollision(Eigen::Vector3d car_state, Eigen::VectorXd 
 }
 
 bool MMConfig::checkCarManiCollision(Eigen::VectorXd mani_state, bool safe, double &min_dist){
+    refreshSphereConfig();
     ScopedCollisionTiming timing("mm_config::checkCarManiCollision");
     ++collision_counters.checkCarManiCollision;
     // Mesh samples already represent the physical thickness of both bodies.
@@ -972,6 +986,7 @@ bool MMConfig::checkCarManiCollision(Eigen::VectorXd mani_state, bool safe, doub
 }
 
 bool MMConfig::checkManiManiCollision(Eigen::VectorXd mani_state, bool safe, double &min_dist){
+    refreshSphereConfig();
     ScopedCollisionTiming timing("mm_config::checkManiManiCollision");
     ++collision_counters.checkManiManiCollision;
     if (use_urdf_collision_mesh_ && urdf_collision_model_ &&
@@ -1073,6 +1088,7 @@ bool MMConfig::checkManiManiCollision(Eigen::VectorXd mani_state, bool safe, dou
 void MMConfig::getSelfCollisionMarkers(const Eigen::Vector3d &car_state,
                                        const Eigen::VectorXd &mani_state,
                                        visualization_msgs::MarkerArray &markers) const {
+    refreshSphereConfig();
     visualization_msgs::Marker clear;
     clear.action = visualization_msgs::Marker::DELETEALL;
     markers.markers.push_back(clear);
@@ -1081,6 +1097,43 @@ void MMConfig::getSelfCollisionMarkers(const Eigen::Vector3d &car_state,
     std::vector<Eigen::Matrix4d> link_tf;
     if (!const_cast<MMConfig*>(this)->getUrdfLinkTransforms(mani_state, link_tf) || link_tf.size() < 8) return;
     const std::string names[] = {"arm_base_link", "Link1", "Link2", "Link3", "Link4", "Link5", "Link6", "arm_gripper_link"};
+
+    // Show the same compact spheres used by the optimizer for every arm link.
+    Eigen::Matrix4d Tcar = Eigen::Matrix4d::Identity();
+    Tcar.block<2,2>(0,0) = Eigen::Rotation2Dd(car_state.z()).toRotationMatrix();
+    Tcar(0,3)=car_state.x(); Tcar(1,3)=car_state.y();
+    const float colors[7][3] = {
+        {0.10f, 0.40f, 1.00f}, {0.10f, 0.85f, 0.35f}, {1.00f, 0.75f, 0.10f},
+        {1.00f, 0.35f, 0.10f}, {0.85f, 0.20f, 0.85f}, {0.10f, 0.85f, 0.85f},
+        {0.95f, 0.95f, 0.95f}};
+    int sphere_id = 0;
+    for (size_t link_idx = 1; link_idx < 8; ++link_idx) {
+        const auto &link_spheres = urdf_collision_model_->linkSpheres(names[link_idx]);
+        for (const auto &sphere : link_spheres) {
+            const Eigen::Vector3d center =
+                (Tcar * link_tf[link_idx] * Eigen::Vector4d(sphere.center.x(), sphere.center.y(), sphere.center.z(), 1.0)).head<3>();
+            visualization_msgs::Marker marker;
+            marker.header.frame_id = "world";
+            marker.header.stamp = ros::Time::now();
+            marker.ns = std::string("collision_spheres/") + names[link_idx];
+            marker.id = sphere_id++;
+            marker.type = visualization_msgs::Marker::SPHERE;
+            marker.action = visualization_msgs::Marker::ADD;
+            marker.pose.orientation.w = 1.0;
+            marker.pose.position.x = center.x();
+            marker.pose.position.y = center.y();
+            marker.pose.position.z = center.z();
+            marker.scale.x = 2.0 * sphere.radius;
+            marker.scale.y = 2.0 * sphere.radius;
+            marker.scale.z = 2.0 * sphere.radius;
+            marker.color.r = colors[link_idx - 1][0];
+            marker.color.g = colors[link_idx - 1][1];
+            marker.color.b = colors[link_idx - 1][2];
+            marker.color.a = 0.35;
+            markers.markers.push_back(marker);
+        }
+    }
+
     double best = self_safe_margin_;
     Eigen::Vector3d best_a, best_b;
     std::string best_pair;
@@ -1098,9 +1151,7 @@ void MMConfig::getSelfCollisionMarkers(const Eigen::Vector3d &car_state,
         }
     }
     if (best_pair.empty()) return;
-    Eigen::Matrix4d Tcar = Eigen::Matrix4d::Identity();
-    Tcar.block<2,2>(0,0) = Eigen::Rotation2Dd(car_state.z()).toRotationMatrix();
-    Tcar(0,3)=car_state.x(); Tcar(1,3)=car_state.y();
+    Tcar(2,3)=0.0;
     // getUrdfLinkTransforms() is already expressed from base_link, including
     // the fixed arm mounting chain.  Do not apply T_q_0_ a second time.
     const Eigen::Matrix4d Tw = Tcar;

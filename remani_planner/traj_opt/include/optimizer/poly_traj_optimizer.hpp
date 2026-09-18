@@ -163,7 +163,7 @@ namespace remani_planner
 
     int dense_sample_resolution_;
     
-    double max_vel_, max_acc_, max_wheel_omega_, max_wheel_alpha_; // dynamic limits
+    double max_vel_, max_acc_, max_wheel_omega_, max_wheel_alpha_, max_yaw_rate_; // dynamic limits
     double mobile_base_wheel_base_;
     double mobile_base_length_, mobile_base_width_, mobile_base_height_, mobile_base_wheel_radius_;
     double mobile_base_check_radius_;

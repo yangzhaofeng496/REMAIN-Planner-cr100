@@ -36,6 +36,7 @@ else()
   set(QT_LIBRARIES Qt5::Widgets)
   qt5_wrap_cpp(MOC_FILES
     src/goal_tool.h
+    src/collision_sphere_panel.h
   )
 endif()
 
@@ -51,6 +52,7 @@ add_definitions(-DQT_NO_KEYWORDS)
 set(SOURCE_FILES
   src/pose_tool.cpp
   src/goal_tool.cpp
+  src/collision_sphere_panel.cpp
   ${MOC_FILES}
 )
 

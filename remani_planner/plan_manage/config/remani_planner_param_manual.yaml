@@ -75,7 +75,7 @@ optimization:
   ground_safe_dis        : 0.03
   safe_margin            : 0.10
   safe_margin_mani       : 0.10
-  self_safe_margin       : 0.03
+  self_safe_margin       : 0.01           # Small margin while retaining Link3-Link5 self-collision checks
   ground_safe_margin     : 0.03
 
   mobile_base_opt_gear: true

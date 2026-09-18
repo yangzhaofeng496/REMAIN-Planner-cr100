@@ -41,6 +41,7 @@ namespace remani_planner
     nh.param("mm/mobile_base_non_singul_vel", non_singul_v_, -1.0);
     nh.param("mm/mobile_base_max_wheel_omega", max_wheel_omega_, -1.0);
     nh.param("mm/mobile_base_max_wheel_alpha", max_wheel_alpha_, -1.0);
+    nh.param("mm/mobile_base_max_yaw_rate", max_yaw_rate_, 0.3);
     nh.param("mm/mobile_base_wheel_base", mobile_base_wheel_base_, -1.0);
     nh.param("mm/mobile_base_wheel_radius", mobile_base_wheel_radius_, -1.0);
     nh.param("mm/mobile_base_length", mobile_base_length_, -1.0);
@@ -1325,6 +1326,19 @@ namespace remani_planner
     }
 
     double omega = aTBv * vTv_inv;
+    // Independent chassis yaw-rate limit. This preserves linear speed while
+    // discouraging sharp turns in the optimized trajectory.
+    pen = omega * omega - max_yaw_rate_ * max_yaw_rate_;
+    f = 0; df = 0;
+    if(smoothedL1(pen, 0.005, f, df)){
+      cost_mm_feasible += wei_feas_ * f;
+      Eigen::Vector2d domega_dv = B_h_.transpose() * acc * vTv_inv -
+                                  2.0 * aTBv * vTv_inv2 * vel;
+      Eigen::Vector2d domega_da = B_h_ * vel * vTv_inv;
+      gradv_2d += wei_feas_ * df * 2.0 * omega * domega_dv;
+      grada_2d += wei_feas_ * df * 2.0 * omega * domega_da;
+      ret = true;
+    }
     double wheel_omega_left = (2.0 * singul_container_[trajid] * v_norm - mobile_base_wheel_base_ * omega) / (2.0 * mobile_base_wheel_radius_);
     Eigen::Vector2d dOmegadV = B_h_.transpose() * acc / vTv - (aTBv * vel + vel.transpose() * B_h_.transpose() * acc * vel) / vTv / vTv;
     Eigen::Vector2d dOmegadA = vTv_inv * (B_h_ * vel);

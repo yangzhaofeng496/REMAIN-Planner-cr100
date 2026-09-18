@@ -1,0 +1,25 @@
+<launch>
+  <arg name="rviz" default="true"/>
+  <arg name="debug" default="false"/>
+  <arg name="robot_description" default="robot_description"/>
+
+  <param name="$(arg robot_description)" command="$(find xacro)/xacro $(find ir100_description)/urdf/ir100_robot.xacro"/>
+  <param name="$(arg robot_description)_semantic" textfile="$(find fastarmer_moveit_config)/config/fastarmer.srdf"/>
+  <rosparam param="$(arg robot_description)_kinematics" command="load" file="$(find fastarmer_moveit_config)/config/kinematics.yaml"/>
+  <rosparam ns="move_group/ompl" command="load" file="$(find fastarmer_moveit_config)/config/ompl_planning.yaml"/>
+  <rosparam param="robot_description_planning" command="load" file="$(find fastarmer_moveit_config)/config/joint_limits.yaml"/>
+
+  <node pkg="robot_state_publisher" type="robot_state_publisher" name="robot_state_publisher"/>
+  <node pkg="joint_state_publisher" type="joint_state_publisher" name="joint_state_publisher"/>
+
+  <param name="move_group/allow_trajectory_execution" value="false"/>
+  <param name="move_group/planning_plugin" value="ompl_interface/OMPLPlanner"/>
+  <param name="move_group/ompl/planning_plugin" value="ompl_interface/OMPLPlanner"/>
+  <param name="move_group/ompl/request_adapters" value="default_planner_request_adapters/AddTimeOptimalParameterization default_planner_request_adapters/FixWorkspaceBounds default_planner_request_adapters/FixStartStateBounds default_planner_request_adapters/FixStartStateCollision default_planner_request_adapters/FixStartStatePathConstraints"/>
+  <param name="move_group/ompl/start_state_max_bounds_error" value="0.1"/>
+  <param name="move_group/moveit_controller_manager" value="moveit_fake_controller_manager/MoveItFakeControllerManager"/>
+  <rosparam ns="move_group" command="load" file="$(find fastarmer_moveit_config)/config/fake_controllers.yaml"/>
+  <node pkg="moveit_ros_move_group" type="move_group" name="move_group" output="screen" args="$(eval '--debug' if arg('debug') else '')"/>
+
+  <node if="$(arg rviz)" pkg="rviz" type="rviz" name="rviz" args="-d $(find fastarmer_moveit_config)/config/fastarmer_motion_planning.rviz" output="screen"/>
+</launch>

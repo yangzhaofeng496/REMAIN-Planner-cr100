@@ -135,6 +135,7 @@ namespace remani_planner
         Eigen::Vector3d getEndEffectorCenterOffset() const;
         
     private:
+        void refreshSphereConfig() const;
         std::vector<Eigen::Vector3d> color_set_;
         std::shared_ptr<GridMap> grid_map_;
         bool useFastArmer_;

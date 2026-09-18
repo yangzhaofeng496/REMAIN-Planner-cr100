@@ -14,8 +14,10 @@ mm:
   mobile_base_wheel_base     : 0.459
   mobile_base_wheel_radius   : 0.039
   mobile_base_non_singul_vel : 0.05
-  mobile_base_max_wheel_omega: 10.0
-  mobile_base_max_wheel_alpha: 20.0
+  # Reduced to avoid abrupt chassis heading changes during EE planning.
+  mobile_base_max_wheel_omega: 4.0
+  mobile_base_max_wheel_alpha: 4.0
+  mobile_base_max_yaw_rate: 0.3
   mobile_base_check_radius   : 0.15
 
   manipulator_dof    : 6

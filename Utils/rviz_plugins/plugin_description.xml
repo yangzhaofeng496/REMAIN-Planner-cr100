@@ -1,4 +1,7 @@
 <library path="lib/librviz_plugins">
+  <class name="rviz_plugins/CollisionSpherePanel" type="CollisionSpherePanel" base_class_type="rviz::Panel">
+    <description>Adjust collision spheres from RViz.</description>
+  </class>
   <class name="rviz_plugins/Goal3DTool"
          type="rviz::Goal3DTool"
          base_class_type="rviz::Tool">

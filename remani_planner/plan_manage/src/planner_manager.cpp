@@ -821,6 +821,10 @@ bool MMPlannerManager::computeUrdfEeTransform(const Eigen::VectorXd &joints, Eig
         Eigen::VectorXd state = traj_container_.singul_traj_data.getPos(t);
         Eigen::VectorXd vel = traj_container_.singul_traj_data.getVel(t);
         const int singul = traj_container_.singul_traj_data.getSingul(t);
+        // Match the controller exactly: its commanded base yaw is derived
+        // from the signed velocity direction, not from the cached trajectory
+        // angle.  Using a different angle here makes the blue planned EE path
+        // diverge from the red measured path near low-speed direction changes.
         Eigen::Vector3d car_state(state(0), state(1),
                                   atan2(singul * vel(1), singul * vel(0)));
         geometry_msgs::PoseStamped base_pose;
